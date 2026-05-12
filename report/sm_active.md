@@ -1,92 +1,326 @@
-ing moe_router_dtype for better numerical stability.
-  warnings.warn(
-[rank2]: Traceback (most recent call last):
-[rank2]:   File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/pretrain_gpt.py", line 342, in <module>
-[rank2]:     pretrain(
-[rank2]:   File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/training/training.py", line 1031, in pretrain
-[rank2]:     iteration, num_floating_point_operations_so_far = train(
-[rank2]:                                                       ^^^^^^
-[rank2]:   File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/training/training.py", line 2795, in train
-[rank2]:     ) = train_step(
-[rank2]:         ^^^^^^^^^^^
-[rank2]:   File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/training/training.py", line 1703, in train_step
-[rank2]:     update_successful, grad_norm, num_zeros_in_grad = optimizer.step()
-[rank2]:                                                       ^^^^^^^^^^^^^^^^
-[rank2]:   File "/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 120, in decorate_context
-[rank2]:     return func(*args, **kwargs)
-[rank2]:            ^^^^^^^^^^^^^^^^^^^^^
-[rank2]:   File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/core/optimizer/optimizer.py", line 1314, in step
-[rank2]:     grad_norm = self.get_grad_norm()
-[rank2]:                 ^^^^^^^^^^^^^^^^^^^^
-[rank2]:   File "/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 120, in decorate_context
-[rank2]:     return func(*args, **kwargs)
-[rank2]:            ^^^^^^^^^^^^^^^^^^^^^
-[rank2]:   File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/core/optimizer/optimizer.py", line 1277, in get_grad_norm
-[rank2]:     grad_norm = get_grad_norm_fp32(
-[rank2]:                 ^^^^^^^^^^^^^^^^^^^
-[rank2]:   File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/core/optimizer/clip_grads.py", line 130, in get_grad_norm_fp32
-[rank2]:     torch.distributed.all_reduce(
-[rank2]:   File "/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/distributed/c10d_logger.py", line 81, in wrapper
-[rank2]:     return func(*args, **kwargs)
-[rank2]:            ^^^^^^^^^^^^^^^^^^^^^
-[rank2]:   File "/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/distributed/distributed_c10d.py", line 2935, in all_reduce
-[rank2]:     work = group.allreduce([tensor], opts)
-[rank2]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-[rank2]: torch.distributed.DistBackendError: NCCL error in: /pytorch/torch/csrc/distributed/c10d/NCCLUtils.cpp:94, unhandled cuda error (run with NCCL_DEBUG=INFO for details), NCCL version 2.27.7
-[rank2]: ncclUnhandledCudaError: Call to CUDA function failed.
-[rank2]: Last error:
-[rank2]: Failed to CUDA calloc async 23648 bytes
-[2026-05-12 08:55:22,017] [INFO] [launch.py:335:sigkill_handler] Killing subprocess 3404077
-Stack (most recent call first):
-  File "/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/distributed/distributed_c10d.py", line 2935 in all_reduce
-  File "/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/distributed/c10d_logger.py", line 81 in wrapper
-  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/core/optimizer/clip_grads.py", line 130 in get_grad_norm_fp32
-  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/core/optimizer/optimizer.py", line 1277 in get_grad_norm
-  File "/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 120 in decorate_context
-  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/core/optimizer/optimizer.py", line 1314 in step
-  File "/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 120 in decorate_context
-  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/training/training.py", line 1703 in train_step
-  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/training/training.py", line 2795 in train
-  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/training/training.py", line 1031 in pretrain
-  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/pretrain_gpt.py", line 342 in <module>
-[2026-05-12 08:55:22,910] [INFO] [launch.py:335:sigkill_handler] Killing subprocess 3404078
-Stack (most recent call first):
-  File "/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/distributed/distributed_c10d.py", line 2935 in all_reduce
-  File "/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/distributed/c10d_logger.py", line 81 in wrapper
-  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/core/optimizer/clip_grads.py", line 130 in get_grad_norm_fp32
-  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/core/optimizer/optimizer.py", line 1277 in get_grad_norm
-  File "/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 120 in decorate_context
-  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/core/optimizer/optimizer.py", line 1314 in step
-  File "/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 120 in decorate_context
-  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/training/training.py", line 1703 in train_step
-  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/training/training.py", line 2795 in train
-  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/training/training.py", line 1031 in pretrain
-  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/pretrain_gpt.py", line 342 in <module>
-[rank3]:[W512 08:55:22.206320433 TCPStore.cpp:125] [c10d] recvValue failed on SocketImpl(fd=76, addr=[llm_7]:60212, remote=[llm_7]:29500): Failed to recv, got 0 bytes. Connection was likely closed. Did the remote server shutdown or crash?
-Exception raised from recvBytes at /pytorch/torch/csrc/distributed/c10d/Utils.hpp:682 (most recent call first):
-frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0xb0 (0xf52eb9d9c700 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libc10.so)
-frame #1: <unknown function> + 0x5f288c0 (0xf52edb3288c0 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cpu.so)
-frame #2: <unknown function> + 0x5f2b864 (0xf52edb32b864 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cpu.so)
-frame #3: <unknown function> + 0x5f2ced4 (0xf52edb32ced4 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cpu.so)
-frame #4: c10d::TCPStore::check(std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > > const&) + 0x224 (0xf52edb32eab4 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cpu.so)
-frame #5: c10d::ProcessGroupNCCL::HeartbeatMonitor::runLoop() + 0x328 (0xf52ebaa08de8 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
-frame #6: <unknown function> + 0xe1ae0 (0xf52eec911ae0 in /lib/aarch64-linux-gnu/libstdc++.so.6)
-frame #7: <unknown function> + 0x8595c (0xf52eedb2595c in /lib/aarch64-linux-gnu/libc.so.6)
-frame #8: <unknown function> + 0xebb0c (0xf52eedb8bb0c in /lib/aarch64-linux-gnu/libc.so.6)
+[rank0]:[E512 10:21:08.164595040 ProcessGroupNCCL.cpp:2057] [PG ID 12 PG GUID 35(EXPERT_MODEL_PARALLEL_GROUP) Rank 0] Process group watchdog thread terminated with exception: CUDA error: an illegal memory access was encountered
+Search for `cudaErrorIllegalAddress' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
 
-[rank3]:[W512 08:55:23.257021146 ProcessGroupNCCL.cpp:1771] [PG ID 0 PG GUID 0(default_pg) Rank 3] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Failed to recv, got 0 bytes. Connection was likely closed. Did the remote server shutdown or crash?
-[2026-05-12 08:55:23,794] [INFO] [launch.py:335:sigkill_handler] Killing subprocess 3404079
-[2026-05-12 08:55:23,794] [INFO] [launch.py:335:sigkill_handler] Killing subprocess 3404080
-Stack (most recent call first):
-  File "/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/distributed/distributed_c10d.py", line 2935 in all_reduce
-  File "/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/distributed/c10d_logger.py", line 81 in wrapper
-  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/core/optimizer/clip_grads.py", line 130 in get_grad_norm_fp32
-  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/core/optimizer/optimizer.py", line 1277 in get_grad_norm
-  File "/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 120 in decorate_context
-  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/core/optimizer/optimizer.py", line 1314 in step
-  File "/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 120 in decorate_context
-  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/training/training.py", line 1703 in train_step
-  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/training/training.py", line 2795 in train
-  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/training/training.py", line 1031 in pretrain
-  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/pretrain_gpt.py", line 342 in <module>
-[2026-05-12 08:55:24,683] [ERROR] [launch.py:341:sigkill_handler] ['/cpfs01/laiqingsi/project/moe/venv_megatron/bin/python3.12', '-u', 'pretrain_gpt.py', '--local_rank=3', '--seed', '1234', '--padded-vocab-size', '151936', '--save', '/cpfs01/laiqingsi/project/moe/output/megatron_qwen3_9BA1B_stage1//checkpoint/pretrain-mcore-qwen3-moe-megatron-A1B-lr-5E-4-minlr-5E-5-bs-8-gbs-4096-seqlen-4096-pr-bf16-tp-1-pp-1-cp-1-ac-none-do-true-sp-false-ti-720000-wi-2000', '--load', '/cpfs01/laiqingsi/project/moe/output/megatron_qwen3_9BA1B_stage1//checkpoint/pretrain-mcore-qwen3-moe-megatron-A1B-lr-5E-4-minlr-5E-5-bs-8-gbs-4096-seqlen-4096-pr-bf16-tp-1-pp-1-cp-1-ac-none-do-true-sp-false-ti-720000-wi-2000', '--tensorboard-dir', '/cpfs01/laiqingsi/project/moe/output/megatron_qwen3_9BA1B_stage1//tensorboard/pretrain-mcore-qwen3-moe-megatron-A1B-lr-5E-4-minlr-5E-5-bs-8-gbs-4096-seqlen-4096-pr-bf16-tp-1-pp-1-cp-1-ac-none-do-true-sp-false-ti-720000-wi-2000_2026.05.12-08.38.40', '--lr', '5E-4', '--min-lr', '5E-5', '--lr-decay-style', 'cosine', '--weight-decay', '0.1', '--adam-beta1', '0.9', '--adam-beta2', '0.95', '--clip-grad', '1.0', '--init-method-std', '0.008', '--attention-dropout', '0.0', '--hidden-dropout', '0.0', '--lr-decay-iters', '720000', '--lr-warmup-iters', '2000', '--train-iters', '720000', '--micro-batch-size', '8', '--global-batch-size', '4096', '--num-layers', '28', '--hidden-size', '1536', '--num-attention-heads', '16', '--ffn-hidden-size', '4096', '--seq-length', '4096', '--max-position-embeddings', '40960', '--log-interval', '1', '--log-throughput', '--eval-interval', '10000', '--eval-iters', '10', '--save-interval', '50', '--tensorboard-queue-size', '1', '--log-timers-to-tensorboard', '--log-validation-ppl-to-tensorboard', '--tensor-model-parallel-size', '1', '--pipeline-model-parallel-size', '1', '--context-parallel-size', '1', '--num-workers', '0', '--tokenizer-type', 'HuggingFaceTokenizer', '--tokenizer-model', '/cpfs01/liuwengang/model/Qwen3-30BA3B-config/', '--swiglu', '--normalization', 'RMSNorm', '--norm-epsilon', '1e-6', '--use-rotary-position-embeddings', '--position-embedding-type', 'rope', '--group-query-attention', '--num-query-groups', '4', '--disable-bias-linear', '--rotary-base', '10000', '--ckpt-format', 'torch', '--transformer-impl', 'transformer_engine', '--cross-entropy-loss-fusion', '--qk-layernorm', '--kv-channels', '128', '--moe-permute-fusion', '--moe-router-fusion', '--data-path', '0.00442854048882036', '/cpfs01/bufanjie/tokenization_data/en_tokenization/fineweb_edu/STEM/_text_document', '0.00199607573127487', '/cpfs01/bufanjie/tokenization_data/en_tokenization/fineweb_edu/SS/_text_document', '0.00406488296692818', '/cpfs01/bufanjie/tokenization_data/en_tokenization/fineweb_edu/Hum/_text_document', '0.00371738800156454', '/cpfs01/bufanjie/tokenization_data/en_tokenization/fineweb_edu/Other/_text_document', '0.0111521640046936', '/cpfs01/bufanjie/tokenization_data/en_tokenization/Nemotron-cc-2.0-HQ/STEM/_text_document', '0.00977834669976758', '/cpfs01/bufanjie/tokenization_data/en_tokenization/Nemotron-cc-2.0-HQ/SS/_text_document', '0.0110713512220509', '/cpfs01/bufanjie/tokenization_data/en_tokenization/Nemotron-cc-2.0-HQ/Hum/_text_document', '0.0136573602666175', '/cpfs01/bufanjie/tokenization_data/en_tokenization/Nemotron-cc-2.0-HQ/Other/_text_document', '0.00758832029015022', '/cpfs01/bufanjie/tokenization_data/en_tokenization/dclm/stem/_text_document', '0.00699030569859418', '/cpfs01/bufanjie/tokenization_data/en_tokenization/dclm/ss/_text_document', '0.012566387700941', '/cpfs01/bufanjie/tokenization_data/en_tokenization/dclm/hum/_text_document', '0.0130674269533258', '/cpfs01/bufanjie/tokenization_data/en_tokenization/dclm/other/_text_document', '0.00998037865637435', '/cpfs01/bufanjie/tokenization_data/en_tokenization/ocr_pdf/stem/_text_document', '0.00398407018428547', '/cpfs01/bufanjie/tokenization_data/en_tokenization/ocr_pdf/ss/_text_document', '0.00185869400078227', '/cpfs01/bufanjie/tokenization_data/en_tokenization/ocr_pdf/hum/_text_document', '0.00293350400993028', '/cpfs01/bufanjie/tokenization_data/en_tokenization/ocr_pdf/other/_text_document', '0.00130108580054759', '/cpfs01/bufanjie/tokenization_data/en_tokenization/nemotron-cc-2.1_cc/hq/stem/_text_document', '0.00112329767873363', '/cpfs01/bufanjie/tokenization_data/en_tokenization/nemotron-cc-2.1_cc/hq/ss/_text_document', '0.000953590835183946', '/cpfs01/bufanjie/tokenization_data/en_tokenization/nemotron-cc-2.1_cc/hq/hum/_text_document', '0.00186677527904654', '/cpfs01/bufanjie/tokenization_data/en_tokenization/nemotron-cc-2.1_cc/hq/other/_text_document', '0.000285269122728757', '/cpfs01/bufanjie/tokenization_data/en_tokenization/nemotron-cc-2.1_cc/mhq/stem/_text_document', '0.000305472318389434', '/cpfs01/bufanjie/tokenization_data/en_tokenization/nemotron-cc-2.1_cc/mhq/ss/_text_document', '0.000293350400993028', '/cpfs01/bufanjie/tokenization_data/en_tokenization/nemotron-cc-2.1_cc/mhq/hum/_text_document', '0.000463057244542713', '/cpfs01/bufanjie/tokenization_data/en_tokenization/nemotron-cc-2.1_cc/mhq/other/_text_document', '0.00223043280093872', '/cpfs01/bufanjie/tokenization_data/en_tokenization/cc_other/books/_text_document', '0.0053013185413616', '/cpfs01/bufanjie/tokenization_data/en_tokenization/cc_other/wiki/_text_document', '0.00227083919226008', '/cpfs01/bufanjie/tokenization_data/en_tokenization/cc_other/red_other/_text_document', '0.000441237793229182', '/cpfs01/bufanjie/tokenization_data/en_tokenization/cc_other/stem_heavy_crawl/_text_document', '0.0197587253561419', '/cpfs01/bufanjie/tokenization_data/en_tokenization/v2.0-DQA/STEM/_text_document', '0.0122835429616915', '/cpfs01/bufanjie/tokenization_data/en_tokenization/v2.0-DQA/SS/_text_document', '0.0125259813096196', '/cpfs01/bufanjie/tokenization_data/en_tokenization/v2.0-DQA/Hum/_text_document', '0.0176171866161102', '/cpfs01/bufanjie/tokenization_data/en_tokenization/v2.0-DQA/Other/_text_document', '0.0288307683356123', '/cpfs01/bufanjie/tokenization_data/en_tokenization/v2.0-hq-syn/stem/_text_document', '0.0218841015396451', '/cpfs01/bufanjie/tokenization_data/en_tokenization/v2.0-hq-syn/ss/_text_document', '0.0238316896013344', '/cpfs01/bufanjie/tokenization_data/en_tokenization/v2.0-hq-syn/hum/_text_document', '0.0304745003345649', '/cpfs01/bufanjie/tokenization_data/en_tokenization/v2.0-hq-syn/other/_text_document', '0.00407296424519245', '/cpfs01/bufanjie/tokenization_data/en_tokenization/t1_t2_syn/cci4.0-arxiv-wiki/_text_document', '0.000678827374198742', '/cpfs01/bufanjie/tokenization_data/en_tokenization/t1_t2_syn/nemotron-2.1-dqa/_text_document', '0.0075640764553574', '/cpfs01/bufanjie/tokenization_data/en_tokenization/t1_t2_syn/nemotron-2.1-hq-syn/_text_document', '0.00619025915043138', '/cpfs01/bufanjie/tokenization_data/en_tokenization/t1_t2_syn/nemotron-2.1-hqt-syn-part1/_text_document', '0.00644077877662377', '/cpfs01/bufanjie/tokenization_data/en_tokenization/t1_t2_syn/nemotron-2.1-hqt-syn-part2/_text_document', '0.00169706843549685', '/cpfs01/bufanjie/tokenization_data/en_tokenization/spec-v1/i_s/_text_document', '0.011701690926664', '/cpfs01/bufanjie/tokenization_data/en_tokenization/spec-v1/rqa/_text_document', '0.0069579805855371', '/cpfs01/bufanjie/tokenization_data/en_tokenization/spec-v1/stem-sft/_text_document', '0.00418610214089224', '/cpfs01/bufanjie/tokenization_data/en_tokenization/mga/score3_part1/_text_document', '0.00279612227943767', '/cpfs01/bufanjie/tokenization_data/en_tokenization/mga/score3_part2/_text_document', '0.00279612227943767', '/cpfs01/bufanjie/tokenization_data/en_tokenization/mga/score3_part3/_text_document', '0.0033698930362009', '/cpfs01/bufanjie/tokenization_data/en_tokenization/mga/score4_part1/_text_document', '0.00493766101946942', '/cpfs01/bufanjie/tokenization_data/en_tokenization/mga/score4_part2/_text_document', '0.0033698930362009', '/cpfs01/bufanjie/tokenization_data/en_tokenization/mga/score4_part3/_text_document', '0.0033698930362009', '/cpfs01/bufanjie/tokenization_data/en_tokenization/mga/score4_part4/_text_document', '0.0033698930362009', '/cpfs01/bufanjie/tokenization_data/en_tokenization/mga/score4_part5/_text_document', '0.00714384998561533', '/cpfs01/bufanjie/tokenization_data/en_tokenization/mga/score5_part1/_text_document', '0.00712768742908679', '/cpfs01/bufanjie/tokenization_data/en_tokenization/mga/score5_part2/_text_document', '0.00714384998561533', '/cpfs01/bufanjie/tokenization_data/en_tokenization/mga/score5_part3/_text_document', '0.00192334422689643', '/cpfs01/bufanjie/tokenization_data/en_tokenization/dolma3-en-syn/part1/_text_document', '0.0019314255051607', '/cpfs01/bufanjie/tokenization_data/en_tokenization/dolma3-en-syn/part2/_text_document', '0.00195566933995352', '/cpfs01/bufanjie/tokenization_data/en_tokenization/dolma3-en-syn/part3/_text_document', '0.00193950678342498', '/cpfs01/bufanjie/tokenization_data/en_tokenization/dolma3-en-syn/part4/_text_document', '0.00225467663573153', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_other/bench/general_sft_zy_part1/_text_document', '0.00128492324401905', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_other/bench/general_sft_zy_part2/_text_document', '0.00247287114886684', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_other/bench/general_sft_zy_part3/_text_document', '0.00737012577701491', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/zh_stem/PART1/_text_document', '0.00313553596653704', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/zh_stem/PART2/_text_document', '0.00572154501110368', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/zh_stem/PART3/_text_document', '0.00402447657560682', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/zh_stem/PART4/_text_document', '0.00269914694026642', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/zh_stem/PART5/_text_document', '0.0051073678630191', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/zh_stem/PART6/_text_document', '0.00203648212259622', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/zh_stem/PART7/_text_document', '0.00544678155011847', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/zh_stem/PART8/_text_document', '0.00368506288850745', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/zh_stem/PART9/_text_document', '0.00473966970199478', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq_ss/PART1/_text_document', '0.0031759423578584', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq_ss/PART2/_text_document', '0.00389113548424636', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq_ss/PART3/_text_document', '0.0015879711789292', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq_ss/PART4/_text_document', '0.00404872041039964', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq_ss/PART5/_text_document', '0.00275167524898418', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq_ss/PART6/_text_document', '0.00386689164945354', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq_ss/PART7/_text_document', '0.00305472318389434', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq_ss/PART8/_text_document', '0.00375779439288589', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq_ss/PART9/_text_document', '0.00432752451051698', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq_ss/PART10/_text_document', '0.00315169852306558', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq_ss/PART11/_text_document', '0.00229104238792075', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq_ss/PART12/_text_document', '0.00252135881845247', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq_ss/PART13/_text_document', '0.00266682182720934', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq_ss/PART14/_text_document', '0.00281228483596621', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq-hum_mq-hum-ss78910/hq_hun/part1/_text_document', '0.00311533277087637', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq-hum_mq-hum-ss78910/hq_hun/part2/_text_document', '0.00475179161939119', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq-hum_mq-hum-ss78910/hq_hun/part3/_text_document', '0.00323655194484043', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq-hum_mq-hum-ss78910/hq_hun/part4/_text_document', '0.00488028394379309', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq-hum_mq-hum-ss78910/hq_hun/part5/_text_document', '0.00347899029276855', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq-hum_mq-hum-ss78910/hq_hun/part6/_text_document', '0.00344262454057933', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_mq_stem_ss/STEM_part1/_text_document', '0.00361233138412902', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_mq_stem_ss/STEM_part2/_text_document', '0.00352747796235417', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_mq_stem_ss/STEM_part3/_text_document', '0.00385476973205714', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_mq_stem_ss/STEM_part4/_text_document', '0.00350323412756136', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_mq_stem_ss/STEM_part5/_text_document', '0.00398811082341761', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_mq_stem_ss/STEM_part6/_text_document', '0.00393962315383198', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_mq_stem_ss/STEM_part7/_text_document', '0.00385476973205714', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_mq_stem_ss/STEM_part8/_text_document', '0.00393962315383198', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_mq_stem_ss/STEM_part9/_text_document', '0.00370930672330027', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_mq_stem_ss/STEM_part10/_text_document', '0.00227083919226008', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_mq_stem_ss/Social_Science_part1/_text_document', '0.00213345746176747', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_mq_stem_ss/Social_Science_part2/_text_document', '0.0021819451313531', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_mq_stem_ss/Social_Science_part3/_text_document', '0.002925422731666', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_mq_stem_ss/Social_Science_part4/_text_document', '0.00189101911383935', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_mq_stem_ss/Social_Science_part5/_text_document', '0.0019879944530106', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_mq_stem_ss/Social_Science_part6/_text_document', '0.00252135881845247', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq-hum_mq-hum-ss78910/mq_ss_789/part7/_text_document', '0.0017940437746681', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq-hum_mq-hum-ss78910/mq_ss_789/part8/_text_document', '0.00202031956606768', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq-hum_mq-hum-ss78910/mq_ss_789/part9/_text_document', '0.0011313789569979', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq-hum_mq-hum-ss78910/mq_ss_789/part10/_text_document', '0.00282036611423049', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq-hum_mq-hum-ss78910/mq_hum/part1/_text_document', '0.00264257799241653', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq-hum_mq-hum-ss78910/mq_hum/part2/_text_document', '0.00320826747091548', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq-hum_mq-hum-ss78910/mq_hum/part3/_text_document', '0.00286077250555184', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq-hum_mq-hum-ss78910/mq_hum/part4/_text_document', '0.00394366379296412', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/stem_part1/_text_document', '0.00525283087177598', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/stem_part2/_text_document', '0.003701225445036', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/stem_part3/_text_document', '0.00365273777545037', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/stem_part4/_text_document', '0.00407296424519245', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/stem_part5/_text_document', '0.00371738800156454', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/stem_part6/_text_document', '0.00355576243627912', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/stem_part7/_text_document', '0.00379820078420724', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/stem_part8/_text_document', '0.00395982634949266', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/stem_part9/_text_document', '0.00475179161939119', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/stem_part10/_text_document', '0.00283652867075903', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/ss_part1/_text_document', '0.00247287114886684', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/ss_part2/_text_document', '0.0027880410011734', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/ss_part3/_text_document', '0.00225467663573153', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/ss_part4/_text_document', '0.00237589580969559', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/ss_part5/_text_document', '0.00312745468827277', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/ss_part6/_text_document', '0.00282440675336262', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/ss_part7/_text_document', '0.0021940670487495', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/hum_part1/_text_document', '0.00250923690105606', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/hum_part2/_text_document', '0.00288501634034465', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/hum_part3/_text_document', '0.00172131227028967', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_lq/stem_part1/_text_document', '0.00178596249640383', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_lq/stem_part2/_text_document', '0.00172939354855394', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_lq/ss_part1/_text_document', '0.00164049948764696', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_lq/ss_part2/_text_document', '0.00178596249640383', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_lq/ss_part3/_text_document', '0.00113946023526217', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_lq/hum_part1/_text_document', '0.0013253296353404', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_lq/hum_part2/_text_document', '0.00189101911383935', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/wx-cn-syn_shq_pdf-ocr-cn/cn_cc_shq/stem_part1/_text_document', '0.00211729490523893', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/wx-cn-syn_shq_pdf-ocr-cn/cn_cc_shq/stem_part2/_text_document', '0.00168898715723258', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/wx-cn-syn_shq_pdf-ocr-cn/cn_cc_shq/other_part1/_text_document', '0.00134957347013321', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/wx-cn-syn_shq_pdf-ocr-cn/cn_cc_shq/other_part2/_text_document', '0.00188293783557508', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/wx-cn-syn_shq_pdf-ocr-cn/cn_cc_shq/other_part3/_text_document', '0.00189910039210362', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/wx-cn-syn_shq_pdf-ocr-cn/cn_cc_shq/other_part4/_text_document', '0.00438005281923474', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/wx-cn-syn_shq_pdf-ocr-cn/cn_wx_syn/part1/_text_document', '0.00517201808913327', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/wx-cn-syn_shq_pdf-ocr-cn/cn_wx_syn/part2/_text_document', '0.00452551582799161', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/wx-cn-syn_shq_pdf-ocr-cn/cn_wx_syn/part3/_text_document', '0.00117986662658353', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/wx-cn-syn_shq_pdf-ocr-cn/PDF_OCR_CN/stem_part1/_text_document', '0.00130916707881186', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/wx-cn-syn_shq_pdf-ocr-cn/PDF_OCR_CN/stem_part2/_text_document', '0.00101015978303384', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/wx-cn-syn_shq_pdf-ocr-cn/PDF_OCR_CN/other_part1/_text_document', '0.000969753391712488', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/wx-cn-syn_shq_pdf-ocr-cn/PDF_OCR_CN/other_part2/_text_document', '0.0258600904456663', '/cpfs01/bufanjie/tokenization_data/math_tokenization/5_score/_text_document', '0.00185869400078227', '/cpfs01/bufanjie/tokenization_data/math_tokenization/megamath_web_pro/_text_document', '0.00480836056724109', '/cpfs01/bufanjie/tokenization_data/math_tokenization/dolma3-math/_text_document', '0.00561648839366816', '/cpfs01/bufanjie/tokenization_data/math_tokenization/math_textbook/_text_document', '0.0505888019343348', '/cpfs01/bufanjie/tokenization_data/math_tokenization/4_score/_text_document', '0.0169706843549685', '/cpfs01/bufanjie/tokenization_data/math_tokenization/3_score/_text_document', '0.00454167838452015', '/cpfs01/bufanjie/tokenization_data/code_tokenization/code-sft_stack_starcoder/Nemotron-SFT-Code-tokenization/part1/_text_document', '0.00499422996731931', '/cpfs01/bufanjie/tokenization_data/code_tokenization/code-sft_stack_starcoder/Nemotron-SFT-Code-tokenization/part2/_text_document', '0.00302239807083725', '/cpfs01/bufanjie/tokenization_data/code_tokenization/code-sft_stack_starcoder/stack-v2-train-full-ids/3_python/_text_document', '0.00475179161939119', '/cpfs01/bufanjie/tokenization_data/code_tokenization/code-sft_stack_starcoder/stack-v2-train-full-ids/3_md/_text_document', '0.0126229566487909', '/cpfs01/bufanjie/tokenization_data/code_tokenization/code-sft_stack_starcoder/stack-v2-train-full-ids/3_other/_text_document', '0.0035880875493362', '/cpfs01/bufanjie/tokenization_data/code_tokenization/code-sft_stack_starcoder/stack-v2-train-full-ids/4_md/_text_document', '0.00153544287021144', '/cpfs01/bufanjie/tokenization_data/code_tokenization/code-sft_stack_starcoder/stack-v2-train-full-ids/4_5_other/_text_document', '0.0106672873088374', '/cpfs01/bufanjie/tokenization_data/code_tokenization/code-sft_stack_starcoder/stack-v2-train-full-ids/2_part1/_text_document', '0.0101743293347169', '/cpfs01/bufanjie/tokenization_data/code_tokenization/code-sft_stack_starcoder/stack-v2-train-full-ids/2_part2/_text_document', '0.00690141163768721', '/cpfs01/bufanjie/tokenization_data/code_tokenization/code-sft_stack_starcoder/starcoder/2/_text_document', '0.00496190485426223', '/cpfs01/bufanjie/tokenization_data/code_tokenization/code-sft_stack_starcoder/starcoder/3/_text_document', '0.00153544287021144', '/cpfs01/bufanjie/tokenization_data/code_tokenization/code-sft_stack_starcoder/starcoder/45/_text_document', '0.00390325740164276', '/cpfs01/bufanjie/tokenization_data/code_tokenization/dolom3/2/_text_document', '0.0132856214664611', '/cpfs01/bufanjie/tokenization_data/code_tokenization/dolom3/3/_text_document', '0.00362041266239329', '/cpfs01/bufanjie/tokenization_data/code_tokenization/dolom3/45/_text_document', '8.88940609069781e-05', '/cpfs01/bufanjie/tokenization_data/code_tokenization/starcoder_text/2/_text_document', '0.00135765474839748', '/cpfs01/bufanjie/tokenization_data/code_tokenization/starcoder_text/3/_text_document', '0.000533364365441868', '/cpfs01/bufanjie/tokenization_data/code_tokenization/starcoder_text/45/_text_document', '0.0017940437746681', '/cpfs01/bufanjie/tokenization_data/code_tokenization/nemotron-code-v2/2/_text_document', '0.00838836683831302', '/cpfs01/bufanjie/tokenization_data/code_tokenization/nemotron-code-v2/3_part1/_text_document', '0.00819441615997052', '/cpfs01/bufanjie/tokenization_data/code_tokenization/nemotron-code-v2/3_part2/_text_document', '0.00898638142986905', '/cpfs01/bufanjie/tokenization_data/code_tokenization/nemotron-code-v2/3_part3/_text_document', '0.0122188927355773', '/cpfs01/bufanjie/tokenization_data/code_tokenization/nemotron-code-v2/4_part1/_text_document', '0.00890556864722635', '/cpfs01/bufanjie/tokenization_data/code_tokenization/nemotron-code-v2/4_part2/_text_document', '0.0108450754306513', '/cpfs01/bufanjie/tokenization_data/code_tokenization/nemotron-code-v2/4_part3/_text_document', '0.00670746095934471', '/cpfs01/bufanjie/tokenization_data/code_tokenization/nemotron-code-v2/5/_text_document', '--split', '99,1,0', '--bf16', '--use-distributed-optimizer', '--moe-grouped-gemm', '--moe-token-dispatcher-type', 'alltoall', '--moe-router-topk', '8', '--num-experts', '128', '--expert-tensor-parallel-size', '1', '--expert-model-parallel-size', '4', '--moe-ffn-hidden-size', '512', '--moe-router-load-balancing-type', 'aux_loss', '--moe-aux-loss-coeff', '0.001', '--moe-layer-freq', '[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]', '--moe-router-pre-softmax', '--overlap-grad-reduce', '--overlap-param-gather', '--attention-backend', 'fused'] exits with return code = 1
+Exception raised from c10_cuda_check_implementation at /pytorch/c10/cuda/CUDAException.cpp:44 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0xb0 (0xede05571c700 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libc10.so)
+frame #1: c10::cuda::c10_cuda_check_implementation(int, char const*, char const*, int, bool) + 0x224 (0xede0557d3574 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libc10_cuda.so)
+frame #2: c10d::ProcessGroupNCCL::WorkNCCL::finishedGPUExecutionInternal() const + 0x4c (0xede05636e0fc in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: c10d::ProcessGroupNCCL::WorkNCCL::isCompleted() + 0x74 (0xede05638d404 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #4: c10d::ProcessGroupNCCL::Watchdog::runLoop() + 0x770 (0xede056394460 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #5: c10d::ProcessGroupNCCL::Watchdog::run() + 0xc8 (0xede056395e18 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #6: <unknown function> + 0xe1ae0 (0xede088291ae0 in /lib/aarch64-linux-gnu/libstdc++.so.6)
+frame #7: <unknown function> + 0x8595c (0xede0894d595c in /lib/aarch64-linux-gnu/libc.so.6)
+frame #8: <unknown function> + 0xebb0c (0xede08953bb0c in /lib/aarch64-linux-gnu/libc.so.6)
+
+[rank1]:[E512 10:21:08.164594976 ProcessGroupNCCL.cpp:2057] [PG ID 12 PG GUID 35(EXPERT_MODEL_PARALLEL_GROUP) Rank 1] Process group watchdog thread terminated with exception: CUDA error: an illegal memory access was encountered
+Search for `cudaErrorIllegalAddress' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
+
+Exception raised from c10_cuda_check_implementation at /pytorch/c10/cuda/CUDAException.cpp:44 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0xb0 (0xe5174fc0c700 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libc10.so)
+frame #1: c10::cuda::c10_cuda_check_implementation(int, char const*, char const*, int, bool) + 0x224 (0xe5174fcc3574 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libc10_cuda.so)
+frame #2: c10d::ProcessGroupNCCL::WorkNCCL::finishedGPUExecutionInternal() const + 0x4c (0xe5175085e0fc in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: c10d::ProcessGroupNCCL::WorkNCCL::isCompleted() + 0x74 (0xe5175087d404 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #4: c10d::ProcessGroupNCCL::Watchdog::runLoop() + 0x770 (0xe51750884460 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #5: c10d::ProcessGroupNCCL::Watchdog::run() + 0xc8 (0xe51750885e18 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #6: <unknown function> + 0xe1ae0 (0xe51782781ae0 in /lib/aarch64-linux-gnu/libstdc++.so.6)
+frame #7: <unknown function> + 0x8595c (0xe517839c595c in /lib/aarch64-linux-gnu/libc.so.6)
+frame #8: <unknown function> + 0xebb0c (0xe51783a2bb0c in /lib/aarch64-linux-gnu/libc.so.6)
+
+terminate called after throwing an instance of 'c10::DistBackendError'
+terminate called after throwing an instance of 'c10::DistBackendError'
+[rank3]:[E512 10:21:08.164684993 ProcessGroupNCCL.cpp:2057] [PG ID 12 PG GUID 35(EXPERT_MODEL_PARALLEL_GROUP) Rank 3] Process group watchdog thread terminated with exception: CUDA error: an illegal memory access was encountered
+Search for `cudaErrorIllegalAddress' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
+
+Exception raised from c10_cuda_check_implementation at /pytorch/c10/cuda/CUDAException.cpp:44 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0xb0 (0xec06adb9c700 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libc10.so)
+frame #1: c10::cuda::c10_cuda_check_implementation(int, char const*, char const*, int, bool) + 0x224 (0xec06adc53574 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libc10_cuda.so)
+frame #2: c10d::ProcessGroupNCCL::WorkNCCL::finishedGPUExecutionInternal() const + 0x4c (0xec06ae7ee0fc in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: c10d::ProcessGroupNCCL::WorkNCCL::isCompleted() + 0x74 (0xec06ae80d404 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #4: c10d::ProcessGroupNCCL::Watchdog::runLoop() + 0x770 (0xec06ae814460 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #5: c10d::ProcessGroupNCCL::Watchdog::run() + 0xc8 (0xec06ae815e18 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #6: <unknown function> + 0xe1ae0 (0xec06e0711ae0 in /lib/aarch64-linux-gnu/libstdc++.so.6)
+frame #7: <unknown function> + 0x8595c (0xec06e195595c in /lib/aarch64-linux-gnu/libc.so.6)
+frame #8: <unknown function> + 0xebb0c (0xec06e19bbb0c in /lib/aarch64-linux-gnu/libc.so.6)
+
+[rank2]:[E512 10:21:08.164689473 ProcessGroupNCCL.cpp:2057] [PG ID 12 PG GUID 35(EXPERT_MODEL_PARALLEL_GROUP) Rank 2] Process group watchdog thread terminated with exception: CUDA error: an illegal memory access was encountered
+Search for `cudaErrorIllegalAddress' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
+
+Exception raised from c10_cuda_check_implementation at /pytorch/c10/cuda/CUDAException.cpp:44 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0xb0 (0xeba71106c700 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libc10.so)
+frame #1: c10::cuda::c10_cuda_check_implementation(int, char const*, char const*, int, bool) + 0x224 (0xeba711123574 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libc10_cuda.so)
+frame #2: c10d::ProcessGroupNCCL::WorkNCCL::finishedGPUExecutionInternal() const + 0x4c (0xeba711cbe0fc in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: c10d::ProcessGroupNCCL::WorkNCCL::isCompleted() + 0x74 (0xeba711cdd404 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #4: c10d::ProcessGroupNCCL::Watchdog::runLoop() + 0x770 (0xeba711ce4460 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #5: c10d::ProcessGroupNCCL::Watchdog::run() + 0xc8 (0xeba711ce5e18 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #6: <unknown function> + 0xe1ae0 (0xeba743be1ae0 in /lib/aarch64-linux-gnu/libstdc++.so.6)
+frame #7: <unknown function> + 0x8595c (0xeba744e2595c in /lib/aarch64-linux-gnu/libc.so.6)
+frame #8: <unknown function> + 0xebb0c (0xeba744e8bb0c in /lib/aarch64-linux-gnu/libc.so.6)
+
+terminate called after throwing an instance of 'c10::DistBackendError'
+terminate called after throwing an instance of 'c10::DistBackendError'
+  what():  [PG ID 12 PG GUID 35(EXPERT_MODEL_PARALLEL_GROUP) Rank 0] Process group watchdog thread terminated with exception: CUDA error: an illegal memory access was encountered
+Search for `cudaErrorIllegalAddress' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
+
+Exception raised from c10_cuda_check_implementation at /pytorch/c10/cuda/CUDAException.cpp:44 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0xb0 (0xede05571c700 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libc10.so)
+frame #1: c10::cuda::c10_cuda_check_implementation(int, char const*, char const*, int, bool) + 0x224 (0xede0557d3574 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libc10_cuda.so)
+frame #2: c10d::ProcessGroupNCCL::WorkNCCL::finishedGPUExecutionInternal() const + 0x4c (0xede05636e0fc in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: c10d::ProcessGroupNCCL::WorkNCCL::isCompleted() + 0x74 (0xede05638d404 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #4: c10d::ProcessGroupNCCL::Watchdog::runLoop() + 0x770 (0xede056394460 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #5: c10d::ProcessGroupNCCL::Watchdog::run() + 0xc8 (0xede056395e18 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #6: <unknown function> + 0xe1ae0 (0xede088291ae0 in /lib/aarch64-linux-gnu/libstdc++.so.6)
+frame #7: <unknown function> + 0x8595c (0xede0894d595c in /lib/aarch64-linux-gnu/libc.so.6)
+frame #8: <unknown function> + 0xebb0c (0xede08953bb0c in /lib/aarch64-linux-gnu/libc.so.6)
+
+Exception raised from run at /pytorch/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp:2063 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0xb0 (0xede05571c700 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libc10.so)
+frame #1: <unknown function> + 0xebf100 (0xede05634f100 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #2: c10d::ProcessGroupNCCL::Watchdog::run() + 0x474 (0xede0563961c4 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: <unknown function> + 0xe1ae0 (0xede088291ae0 in /lib/aarch64-linux-gnu/libstdc++.so.6)
+frame #4: <unknown function> + 0x8595c (0xede0894d595c in /lib/aarch64-linux-gnu/libc.so.6)
+frame #5: <unknown function> + 0xebb0c (0xede08953bb0c in /lib/aarch64-linux-gnu/libc.so.6)
+  what():  
+[PG ID 12 PG GUID 35(EXPERT_MODEL_PARALLEL_GROUP) Rank 1] Process group watchdog thread terminated with exception: CUDA error: an illegal memory access was encountered
+Search for `cudaErrorIllegalAddress' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
+
+Exception raised from c10_cuda_check_implementation at /pytorch/c10/cuda/CUDAException.cpp:44 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0xb0 (0xe5174fc0c700 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libc10.so)
+frame #1: c10::cuda::c10_cuda_check_implementation(int, char const*, char const*, int, bool) + 0x224 (0xe5174fcc3574 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libc10_cuda.so)
+frame #2: c10d::ProcessGroupNCCL::WorkNCCL::finishedGPUExecutionInternal() const + 0x4c (0xe5175085e0fc in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: c10d::ProcessGroupNCCL::WorkNCCL::isCompleted() + 0x74 (0xe5175087d404 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #4: c10d::ProcessGroupNCCL::Watchdog::runLoop() + 0x770 (0xe51750884460 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #5: c10d::ProcessGroupNCCL::Watchdog::run() + 0xc8 (0xe51750885e18 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #6: <unknown function> + 0xe1ae0 (0xe51782781ae0 in /lib/aarch64-linux-gnu/libstdc++.so.6)
+frame #7: <unknown function> + 0x8595c (0xe517839c595c in /lib/aarch64-linux-gnu/libc.so.6)
+frame #8: <unknown function> + 0xebb0c (0xe51783a2bb0c in /lib/aarch64-linux-gnu/libc.so.6)
+
+Exception raised from run at /pytorch/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp:2063 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0xb0 (0xe5174fc0c700 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libc10.so)
+frame #1: <unknown function> + 0xebf100 (0xe5175083f100 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #2: c10d::ProcessGroupNCCL::Watchdog::run() + 0x474 (0xe517508861c4 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: <unknown function> + 0xe1ae0 (0xe51782781ae0 in /lib/aarch64-linux-gnu/libstdc++.so.6)
+frame #4: <unknown function> + 0x8595c (0xe517839c595c in /lib/aarch64-linux-gnu/libc.so.6)
+frame #5: <unknown function> + 0xebb0c (0xe51783a2bb0c in /lib/aarch64-linux-gnu/libc.so.6)
+Fatal Python error: 
+Aborted
+
+Thread 0xFatal Python error: 0000eddb21fbf180Aborted (most recent call first):
+
+
+  <no Python frame>
+Thread 0x
+Thread 0x0000e511dd72f1800000eddb227cf180 (most recent call first):
+ (most recent call first):
+  <no Python frame>
+  <no Python frame>
+
+
+  what():  Thread 0xThread 0x[PG ID 12 PG GUID 35(EXPERT_MODEL_PARALLEL_GROUP) Rank 3] Process group watchdog thread terminated with exception: CUDA error: an illegal memory access was encountered
+Search for `cudaErrorIllegalAddress' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
+
+Exception raised from c10_cuda_check_implementation at /pytorch/c10/cuda/CUDAException.cpp:44 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0xb0 (0xec06adb9c700 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libc10.so)
+frame #1: c10::cuda::c10_cuda_check_implementation(int, char const*, char const*, int, bool) + 0x224 (0xec06adc53574 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libc10_cuda.so)
+frame #2: c10d::ProcessGroupNCCL::WorkNCCL::finishedGPUExecutionInternal() const + 0x4c (0xec06ae7ee0fc in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: c10d::ProcessGroupNCCL::WorkNCCL::isCompleted() + 0x74 (0xec06ae80d404 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #4: c10d::ProcessGroupNCCL::Watchdog::runLoop() + 0x770 (0xec06ae814460 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #5: c10d::ProcessGroupNCCL::Watchdog::run() + 0xc8 (0xec06ae815e18 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #6: <unknown function> + 0xe1ae0 (0xec06e0711ae0 in /lib/aarch64-linux-gnu/libstdc++.so.6)
+frame #7: <unknown function> + 0x8595c (0xec06e195595c in /lib/aarch64-linux-gnu/libc.so.6)
+frame #8: <unknown function> + 0xebb0c (0xec06e19bbb0c in /lib/aarch64-linux-gnu/libc.so.6)
+
+Exception raised from run at /pytorch/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp:2063 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0xb0 (0xec06adb9c700 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libc10.so)
+frame #1: <unknown function> + 0xebf100 (0xec06ae7cf100 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #2: c10d::ProcessGroupNCCL::Watchdog::run() + 0x474 (0xec06ae8161c4 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: <unknown function> + 0xe1ae0 (0xec06e0711ae0 in /lib/aarch64-linux-gnu/libstdc++.so.6)
+frame #4: <unknown function> + 0x8595c (0xec06e195595c in /lib/aarch64-linux-gnu/libc.so.6)
+frame #5: <unknown function> + 0xebb0c (0xec06e19bbb0c in /lib/aarch64-linux-gnu/libc.so.6)
+0000e511ddf3f180  what():  0000eddb22fdf180
+ (most recent call first):
+[PG ID 12 PG GUID 35(EXPERT_MODEL_PARALLEL_GROUP) Rank 2] Process group watchdog thread terminated with exception: CUDA error: an illegal memory access was encountered
+Search for `cudaErrorIllegalAddress' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
+
+Exception raised from c10_cuda_check_implementation at /pytorch/c10/cuda/CUDAException.cpp:44 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0xb0 (0xeba71106c700 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libc10.so)
+frame #1: c10::cuda::c10_cuda_check_implementation(int, char const*, char const*, int, bool) + 0x224 (0xeba711123574 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libc10_cuda.so)
+frame #2: c10d::ProcessGroupNCCL::WorkNCCL::finishedGPUExecutionInternal() const + 0x4c (0xeba711cbe0fc in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: c10d::ProcessGroupNCCL::WorkNCCL::isCompleted() + 0x74 (0xeba711cdd404 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #4: c10d::ProcessGroupNCCL::Watchdog::runLoop() + 0x770 (0xeba711ce4460 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #5: c10d::ProcessGroupNCCL::Watchdog::run() + 0xc8 (0xeba711ce5e18 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #6: <unknown function> + 0xe1ae0 (0xeba743be1ae0 in /lib/aarch64-linux-gnu/libstdc++.so.6)
+frame #7: <unknown function> + 0x8595c (0xeba744e2595c in /lib/aarch64-linux-gnu/libc.so.6)
+frame #8: <unknown function> + 0xebb0c (0xeba744e8bb0c in /lib/aarch64-linux-gnu/libc.so.6)
+
+Exception raised from run at /pytorch/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp:2063 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0xb0 (0xeba71106c700 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libc10.so)
+frame #1: <unknown function> + 0xebf100 (0xeba711c9f100 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #2: c10d::ProcessGroupNCCL::Watchdog::run() + 0x474 (0xeba711ce61c4 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: <unknown function> + 0xe1ae0 (0xeba743be1ae0 in /lib/aarch64-linux-gnu/libstdc++.so.6)
+frame #4: <unknown function> + 0x8595c (0xeba744e2595c in /lib/aarch64-linux-gnu/libc.so.6)
+frame #5: <unknown function> + 0xebb0c (0xeba744e8bb0c in /lib/aarch64-linux-gnu/libc.so.6)
+ (most recent call first):
+  <no Python frame>
+Fatal Python error: 
+  <no Python frame>
+
+Aborted
+Thread 0xFatal Python error: 
+
+Thread 0x0000e511de74f180AbortedThread 0x0000eddb237ef180 (most recent call first):
+  <no Python frame>
+
+
+0000ec01737ef180 (most recent call first):
+
+Thread 0xThread 0x (most recent call first):
+  File 0000e511def5f180  <no Python frame>
+" (most recent call first):
+
+/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/core/tensor_parallel/mappings.py0000eba19d72f180  <no Python frame>
+Thread 0x" (most recent call first):
+
+0000ec0172fdf180, line   <no Python frame>
+Thread 0x (most recent call first):
+439
+0000e5122c99f180  <no Python frame>
+ in Thread 0x (most recent call first):
+
+forward0000eba19df3f180  File Thread 0x
+ (most recent call first):
+"  File   File /usr/lib/python3.12/threading.py"0000ec0173fff180""/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/autograd/function.py (most recent call first):
+/wireless/minyusong/TE2/TransformerEngine/transformer_engine/pytorch/router.py, line "  <no Python frame>
+"359, line 
+, line  in 581Thread 0x260wait in 0000ec018082f180 in 
+apply (most recent call first):
+backward  File 
+  <no Python frame>
+
+"  File 
+  File /usr/lib/python3.12/threading.py"Thread 0x""/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/core/tensor_parallel/mappings.py0000ec018103f180/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/autograd/function.py, line " (most recent call first):
+"655, line   File , line  in 458"315wait in /usr/lib/python3.12/threading.py in 
+backward"apply  File 
+, line 
+  File "359
+"/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/tqdm/_monitor.py in Thread 0x/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/autograd/function.py"wait", line 
+0000eba19e74f180, line 60  File  (most recent call first):
+315 in "  <no Python frame>
+ in run/usr/lib/python3.12/threading.py
+apply
+"Thread 0x
+  File , line 
+"6550000eba19ef5f180Thread 0x/usr/lib/python3.12/threading.py in  (most recent call first):
+0000eddb23fff180" (most recent call first):
+wait  <no Python frame>
+, line   File 
+
+1073"  File Thread 0x in /usr/lib/python3.12/threading.py"0000eba1ec99f180_bootstrap_inner"/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/tqdm/_monitor.py (most recent call first):
+
+, line "  File   File 359, line "" in 60/usr/lib/python3.12/threading.py/usr/lib/python3.12/threading.pywait in ""
+run, line , line   File 
+3591030"  File  in  in /usr/lib/python3.12/threading.py"wait_bootstrap"/usr/lib/python3.12/threading.py
+
+, line "  File 
+655, line "Thread 0x in 1073/usr/lib/python3.12/threading.py0000e512b2fdf180wait in " (most recent call first):
+
+_bootstrap_inner, line   File   File 
+655""  File  in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/tqdm/_monitor.py/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/_inductor/compile_worker/subproc_pool.py"wait""/usr/lib/python3.12/threading.py
+, line , line "  File 6073, line " in  in 1030/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/tqdm/_monitor.pyrun_recv_msg in "
+
+_bootstrap, line   File 
+60  File "
+ in "/usr/lib/python3.12/threading.pyThread 0xrun/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/_inductor/compile_worker/subproc_pool.py"0000ec020cf9f180
+", line  (most recent call first):
+  File , line 1073"228 in /usr/lib/python3.12/threading.py in _bootstrap_inner  File "_read_thread
+", line 
+  File /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/_inductor/compile_worker/subproc_pool.py1073  File "" in "/usr/lib/python3.12/threading.py, line _bootstrap_inner/usr/lib/python3.12/threading.py"73
+", line  in   File , line 1030_recv_msg"1010 in 
+/usr/lib/python3.12/threading.py in _bootstrap  File "run
+", line 
+
+  File /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/_inductor/compile_worker/subproc_pool.py1030Thread 0x"0000eddbaefdf180" in /usr/lib/python3.12/threading.py (most recent call first):
+, line _bootstrap"  File 228
+, line " in 
+1073/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/_inductor/compile_worker/subproc_pool.py_read_threadThread 0x in "
+0000eba272fdf180_bootstrap_inner, line   File  (most recent call first):
+
+73"  File  in /usr/lib/python3.12/threading.py"_recv_msg  File "/usr/lib/python3.12/threading.py
+, line ""  File 1010/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/_inductor/compile_worker/subproc_pool.py, line " in "1030/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/_inductor/compile_worker/subproc_pool.pyrun, line  in "
+73_bootstrap, line   File  in 
+228"_recv_msg
+ in Thread 0x/usr/lib/python3.12/threading.py
+_read_thread0000e51783cc44e0"  File 
+ (most recent call first):
+, line "  File   File "1073/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/_inductor/compile_worker/subproc_pool.py"/usr/lib/python3.12/threading.py in "/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/distributed/distributed_c10d.py"_bootstrap_inner, line ", line 
+228, line 1010  File  in 1797 in "_read_thread in run/usr/lib/python3.12/threading.py
+_distributed_excepthook
+"  File 
+  File , line ""1030/usr/lib/python3.12/threading.py/usr/lib/python3.12/threading.py in ""_bootstrap, line , line 
+10101073
+ in  in Thread 0xrun
+Extension modules: _bootstrap_inner0000ec02fa46f180
+numpy._core._multiarray_umath
+ (most recent call first):
+  File   File   File ", ""/usr/lib/python3.12/threading.pynumpy.linalg._umath_linalg/usr/lib/python3.12/threading.py/usr/lib/python3.12/threading.py"", ", line , line torch._C, line 10731030,  in 359 in torch._C._dynamo.autograd_compiler_bootstrap in _bootstrap_inner, 
+wait
+torch._C._dynamo.eval_frame
+
+  File , Thread 0x  File "torch._C._dynamo.guards0000ede0897d44e0"/usr/lib/python3.12/threading.py,  (most recent call first):
+/usr/lib/python3.12/queue.py"torch._C._dynamo.utils  File ", line , ", line 1030torch._C._fft/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/core/pipeline_parallel/schedules.py180 in , " in _bootstraptorch._C._linalg, line get
+, 189
+
+torch._C._nested in   File Thread 0x, custom_backward"0000eba7451244e0torch._C._nn
+/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/tensorboard/summary/writer/event_file_writer.py (most recent call first):
+,   File "  File torch._C._sparse", line ", /cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/core/pipeline_parallel/schedules.py269/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/core/pipeline_parallel/schedules.pytorch._C._special" in ", line _run, line 487
+189 in   File  in backward_step"custom_backward
+/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/tensorboard/summary/writer/event_file_writer.py
+  File ""  File , /cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/core/pipeline_parallel/schedules.py, line "google._upb._message"244/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/core/pipeline_parallel/schedules.py, line  in ", 651run, line numpy.random._common in 
+487, forward_backward_no_pipelining  File  in numpy.random.bit_generator
+"backward_step,   File /usr/lib/python3.12/threading.py
+numpy.random._bounded_integers""  File , /cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/training/training.py, line "numpy.random._pcg64"1073/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/core/pipeline_parallel/schedules.py, , line  in "numpy.random._generator1652_bootstrap_inner, line ,  in 
+651numpy.random._mt19937train_step  File  in 
+, "forward_backward_no_pipelining  File numpy.random._philox/usr/lib/python3.12/threading.py
+", "  File /cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/training/training.pynumpy.random._sfc64, line "", 1030/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/training/training.pynumpy.random.mtrand, line  in "2795_bootstrap, line  in 
+1652train
+ in 
+, Thread 0xtrain_step  File yaml._yaml0000ec06e1c544e0
+" (most recent call first):
+  File /cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/training/training.py  File "", "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/training/training.pymarkupsafe._speedups, line /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/distributed/distributed_c10d.py"1031, line ",  in 2795, line regex._regexpretrain in 1797
+, train in   File psutil._psutil_linux
+_distributed_excepthook"  File 
+, /cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/pretrain_gpt.py"charset_normalizer.md"/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/training/training.py, line , "342requests.packages.charset_normalizer.md in <module>, , line 
+requests.packages.chardet.md1031 in pretrain
+,   File PIL._imaging"/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/pretrain_gpt.py
+Extension modules: ", numpy._core._multiarray_umath, line msgpack._cmsgpack342,  in , numpy.linalg._umath_linalg
+Extension modules: <module>sentencepiece._sentencepiecenumpy._core._multiarray_umath, 
+, torch._C, , cuda_utilsnumpy.linalg._umath_linalgtorch._C._dynamo.autograd_compiler, , , __triton_launchertorch._Ctorch._C._dynamo.eval_frame (total: , , 35torch._C._dynamo.autograd_compilertorch._C._dynamo.guards), , 
+torch._C._dynamo.eval_frametorch._C._dynamo.utils
+Extension modules: , , numpy._core._multiarray_umathtorch._C._dynamo.guardstorch._C._fft, , , torch._C._dynamo.utilsnumpy.linalg._umath_linalgtorch._C._linalg, , , torch._C._ffttorch._C._nestedtorch._C, , , torch._C._linalgtorch._C._nntorch._C._dynamo.autograd_compiler, , , torch._C._nestedtorch._C._sparsetorch._C._dynamo.eval_frame, , , torch._C._nntorch._C._specialtorch._C._dynamo.guards, , torch._C._sparsetorch._C._dynamo.utils, , torch._C._specialtorch._C._fft, torch._C._linalg, torch._C._nested, torch._C._nn, torch._C._sparse, torch._C._special, google._upb._message, numpy.random._common, numpy.random.bit_generator, numpy.random._bounded_integers, numpy.random._pcg64, numpy.random._generator, numpy.random._mt19937, numpy.random._philox, numpy.random._sfc64, numpy.random.mtrand, yaml._yaml, markupsafe._speedups, regex._regex, , google._upb._message, psutil._psutil_linuxgoogle._upb._message, numpy.random._common, numpy.random.bit_generator, numpy.random._bounded_integers, numpy.random._pcg64, numpy.random._generator, , , charset_normalizer.mdnumpy.random._commonnumpy.random._mt19937, , , numpy.random.bit_generatorrequests.packages.charset_normalizer.mdnumpy.random._philox, , , numpy.random._bounded_integersrequests.packages.chardet.mdnumpy.random._sfc64, , numpy.random._pcg64numpy.random.mtrand, , numpy.random._generatorPIL._imaging, numpy.random._mt19937, numpy.random._philox, numpy.random._sfc64, numpy.random.mtrand, yaml._yaml, msgpack._cmsgpack, markupsafe._speedups, sentencepiece._sentencepiece, regex._regex, psutil._psutil_linux, , charset_normalizer.mdcuda_utils, requests.packages.charset_normalizer.md, requests.packages.chardet.md, __triton_launcher (total: 35, )PIL._imaging
+, msgpack._cmsgpack, sentencepiece._sentencepiece, cuda_utils, yaml._yaml, __triton_launcher (total: 35)
+, markupsafe._speedups, regex._regex, psutil._psutil_linux, charset_normalizer.md, requests.packages.charset_normalizer.md, requests.packages.chardet.md, PIL._imaging, msgpack._cmsgpack, sentencepiece._sentencepiece, cuda_utils, __triton_launcher (total: 35)
+[2026-05-12 10:21:40,129] [INFO] [launch.py:335:sigkill_handler] Killing subprocess 1090217
+[2026-05-12 10:21:40,129] [INFO] [launch.py:335:sigkill_handler] Killing subprocess 1090218
