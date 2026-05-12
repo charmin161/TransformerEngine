@@ -1,426 +1,92 @@
-你的判断是对的：**不要再用额外脚本硬拉 SM Active**。你已经实测 MoE 训练耗时翻倍，说明辅助 kernel 在真实抢资源。
-
-对于 Megatron-LM/Megatron-Core 的 MoE 训练，**SM Active 只有 35% 很常见**，尤其是 EP、All-to-All、动态 routing、小 expert GEMM、pipeline/host overhead 混在一起时。更合理的目标不是“人为把 SM Active 拉高”，而是让训练本身在通信等待、CPU gap、小 kernel、负载不均时少空转。
-
-## 为什么 MoE 的 SM Active 会低
-
-MoE 不是一个连续的大 GEMM 工作负载，而是：
-
-```text
-Router
-Token permutation / dispatch
-EP All-to-All
-Grouped expert GEMM
-Token combine / unpermutation
-Backward 里再来一遍类似过程
-```
-
-其中很多阶段不是强计算阶段。
-
-Megatron 的 MoE 优化文档把瓶颈分成三类：memory、communication、compute efficiency，并明确指出 MoE 的 compute efficiency 问题常来自 **small expert GEMMs + host overhead**，指标上就表现为 GPU SM utilization 偏低。([NVIDIA Docs][1])
-
-具体到你的 MoE 训练，低 SM Active 常见原因有这些：
-
-### 1. EP All-to-All 暴露出来，GPU 在等通信
-
-如果 expert parallel 跨 GPU 分发 token，MoE 层会发生 token dispatch/combine。Megatron 文档也明确说 EP/TP 是 communication-intensive，最好把 EP×TP 限制在 NVLink 域内；跨节点扩 EP/TP 通常会暴露更多通信。([NVIDIA Docs][2])
-
-这种情况下，`SM Active=35%` 不代表 expert GEMM 很慢，而可能是：
-
-```text
-一部分时间 GPU 在跑 GEMM；
-一部分时间在等 NCCL / All-to-All / dispatch；
-一部分时间在等 CPU launch / synchronization。
-```
-
-### 2. expert GEMM 太小，单个 GEMM 喂不满 GPU
-
-MoE 每个 expert 只处理被 router 分到的 token。若 micro-batch 小、sequence length 小、top-k 小、expert 数多、EP 切得太碎，则每个 local expert 的 token 数很少。
-
-结果是：
-
-```text
-每个 expert GEMM 的 M 维很小
-Grouped GEMM 不够大
-kernel launch 多
-单 kernel SM 覆盖率不高
-```
-
-Megatron 文档中也提到，EP 相比 TP 对 expert 层通常有更好的 GEMM efficiency，因为本地矩阵尺寸更大，GPU utilization 更好；例如 Mixtral 8x7B 上 EP8×TP1 优于 EP4×TP2。([NVIDIA Docs][2])
-
-### 3. token permutation / unpermutation / router 是一堆小 kernel
-
-MoE 层除了 GEMM，还有 routing、topk、scatter/gather、permute/unpermute、combine 等操作。这些 kernel 往往：
-
-```text
-计算量小
-访存/索引开销高
-kernel 数量多
-单次执行时间短
-SM Active 不稳定
-```
-
-所以 Megatron 推荐打开 router fusion、permute fusion、grouped GEMM。官方性能建议里直接列了：
-
-```bash
---moe-grouped-gemm
---moe-router-fusion
---moe-permute-fusion
-```
-
-([NVIDIA Docs][2])
-
-### 4. expert 负载不均，部分 rank/SM 在等慢 expert
-
-MoE router 如果把 token 分配得不均，某些 expert/rank token 多，某些 expert/rank token 少。少的 rank 很快结束，多的 rank 成为 straggler，整体同步点等待。
-
-Megatron 支持多种 load balancing，例如 `aux_loss`、`seq_aux_loss`、`global_aux_loss`、`sinkhorn`、aux-loss-free bias balancing 等。([NVIDIA Docs][2])
-
-### 5. CPU launch gap / Python 抖动
-
-如果 Nsight Systems timeline 里 kernel 与 kernel 之间有明显空白，SM Active 会被拉低。Megatron 文档把这个归为 CPU overhead bottleneck，并建议 manual GC、CUDA Graph、减少 kernel launch、降低 TP 或增大 micro-batch。([NVIDIA Docs][2])
-
----
-
-## 能不能“速度几乎不变，但 SM Active 提升”？
-
-可以，但前提是：**提升的 SM Active 必须来自训练本身的有效 overlap/fusion，而不是额外无意义计算。**
-
-也就是说，有两类方案：
-
-```text
-A. 有意义提升：
-	隐藏通信等待
-	融合小 kernel
-	减少 CPU launch gap
-	让 expert GEMM 变大
-	减少负载不均
-
-B. 无意义提升：
-	额外跑 busy kernel
-	额外做空转计算
-```
-
-你前面的脚本属于 B，所以训练耗时翻倍是正常结果。
-
-你现在要做的是 A。
-
----
-
-## 最小改动优先级
-
-### 第一优先级：确认这些通用性能开关是否已打开
-
-先检查你的 Megatron-LM 启动参数里有没有这些：
-
-```bash
---moe-grouped-gemm
---moe-router-fusion
---moe-permute-fusion
---use-distributed-optimizer
---overlap-param-gather
---overlap-grad-reduce
---tp-comm-overlap
---manual-gc
---manual-gc-interval 100
-```
-
-这些属于相对低风险配置项。Megatron 官方文档也把 grouped GEMM、router fusion、permute fusion、通信 overlap、manual GC 列为 MoE training 的通用性能建议。([NVIDIA Docs][2])
-
-如果你只想先试最小集合，我建议先加：
-
-```bash
---moe-grouped-gemm \
---moe-router-fusion \
---moe-permute-fusion
-```
-
-这三个最直接针对 MoE 的低 SM utilization。
-
----
-
-### 第二优先级：如果 EP > 1，优先优化 token dispatcher
-
-如果你现在是 EP 训练，确认 dispatcher。
-
-Megatron 基础示例里 MoE token dispatcher 用的是：
-
-```bash
---moe-token-dispatcher-type alltoall
-```
-
-([NVIDIA Docs][2])
-
-如果是跨节点 EP 或 fine-grained MoE，可以试 DeepEP：
-
-```bash
---moe-token-dispatcher-type flex \
---moe-flex-dispatcher-backend deepep
-```
-
-Megatron 文档说 DeepEP 针对大规模 MoE token dispatch/combine 优化，尤其推荐给 DeepSeek-V3 这类 fine-grained MoE；文档也给出了这组启用参数。([NVIDIA Docs][3])
-
-如果是 GB200 / B200 / H100，且场景是 intra-node 或 multi-node NVLink，可试 HybridEP：
-
-```bash
---moe-token-dispatcher-type flex \
---moe-flex-dispatcher-backend hybridep
-```
-
-官方文档描述 HybridEP 是 NVIDIA 的优化 dispatcher，目标是降低 SM resource usage，并支持 intra-node 和 multi-node NVLink 场景。([NVIDIA Docs][3])
-
-注意：DeepEP/HybridEP 不是“保证提升 SM Active”。它们更可能减少通信开销、减少等待和资源浪费，最终 step time 下降或持平。SM Active 可能升，也可能因为通信更高效而不明显升，但 tokens/sec 应该是更重要指标。
-
----
-
-### 第三优先级：打开 MoE EP All-to-All overlap
-
-如果 Nsight 里看到大量 EP All-to-All 暴露在关键路径上，试：
-
-```bash
---overlap-moe-expert-parallel-comm
-```
-
-如果 TransformerEngine 版本支持，再加：
-
-```bash
---delay-wgrad-compute
-```
-
-Megatron 文档中 EP All-to-All 的 overlap 配置就是这两个参数；新版本还提到 batch-level overlap 用 `--overlap-moe-expert-parallel-comm`，可选 `--delay-wgrad-compute`。([NVIDIA Docs][2])
-
-这类改动最符合你的目标：**让原本通信等待期间有计算可以跑**。如果配置适配得好，SM Active 会升，step time 可能不变甚至变快。
-
----
-
-### 第四优先级：增大 micro-batch，让 expert GEMM 变大
-
-如果每个 expert token 数太少，`--moe-grouped-gemm` 也救不了太多。最直接的办法是增大每 GPU micro-batch：
-
-```bash
---micro-batch-size N
-```
-
-或者在显存允许的情况下减少过度切分，例如降低 TP/CP，让每 GPU 本地矩阵更大。
-
-Megatron 性能指南明确提醒：过大的 TP 或 CP 会让每 GPU 并行度不足、通信过高，甚至 host-performance bound；文档举例说 TP=8 可能导致低 GPU utilization。([NVIDIA Docs][4])
-
-如果你要保持 global batch 不变，可以：
-
-```text
-增大 micro-batch-size
-减少 gradient-accumulation-steps
-```
-
-这样 step 数语义不变，可能提升单 step 的 SM Active 和 tokens/sec。
-
----
-
-### 第五优先级：调整 EP / TP / ETP 映射
-
-如果你现在 MoE 层用了较大的 TP，可能会把 expert GEMM 切得太碎。Megatron 文档建议 MoE expert 层优先 EP 而不是 TP，因为 EP 通常有更好的 GEMM efficiency、更低通信，并且 `EP = num_experts` 时可以消除 local token permutation。([NVIDIA Docs][2])
-
-优先检查：
-
-```bash
---expert-model-parallel-size
---expert-tensor-parallel-size
---tensor-model-parallel-size
-```
-
-经验方向：
-
-```text
-Attention 层可能需要 TP
-MoE expert 层尽量 ETP 小一些，EP 合理一些
-EP × TP 尽量留在 NVLink 域内
-```
-
-Megatron 文档也提到 Parallel Folding 可以把 attention 和 MoE 的并行策略解耦：attention 用 TP×CP×DP×PP，MoE 用 ETP×EP×EDP×PP。([NVIDIA Docs][1])
-
-这不是最小改动，但如果你的当前 parallel mapping 不合理，它可能比小开关更有效。
-
----
-
-## 我建议你按这个实验顺序来
-
-### Step 1：先不要追 SM Active，先记录基线
-
-记录这些：
-
-```text
-每 step 时间
-tokens/s
-GPU SM Active
-GPU Tensor pipe active
-DRAM active / HBM bandwidth
-NCCL time
-MoE layer time
-expert GEMM time
-token dispatch/combine time
-```
-
-如果只能先看简单指标，至少看：
-
-```bash
-nvidia-smi dmon -s pucvmet -d 1
-```
-
-以及 Megatron 自带 timer log。
-
----
-
-### Step 2：只加 MoE fusion / grouped GEMM
-
-```bash
---moe-grouped-gemm \
---moe-router-fusion \
---moe-permute-fusion
-```
-
-预期：
-
-```text
-step time 下降或基本不变
-SM Active 可能上升
-kernel 数量减少
-小 kernel gap 减少
-```
-
----
-
-### Step 3：优化 dispatcher
-
-如果是普通 EP：
-
-```bash
---moe-token-dispatcher-type alltoall
-```
-
-如果是跨节点或 DeepSeek/Qwen 这类 fine-grained MoE：
-
-```bash
---moe-token-dispatcher-type flex \
---moe-flex-dispatcher-backend deepep
-```
-
-如果是合适的 NVIDIA NVLink/GB/Hopper 场景：
-
-```bash
---moe-token-dispatcher-type flex \
---moe-flex-dispatcher-backend hybridep
-```
-
----
-
-### Step 4：打开通信 overlap
-
-```bash
---overlap-moe-expert-parallel-comm
-```
-
-可选：
-
-```bash
---delay-wgrad-compute
-```
-
-这一步最有可能做到你要的“速度几乎不变甚至更快，同时 SM Active 提升”。
-
----
-
-### Step 5：如果还有 CPU gap，再试 CUDA Graph
-
-对于 dropless MoE，完整 MoE layer 因为动态 shape 不一定容易 capture。Megatron 文档说，dropless MoE 的 full CUDA Graph 受动态 expert computation 限制，partial CUDA Graph 更安全，通常 capture attention、router、moe_preprocess 等静态部分。([NVIDIA Docs][1])
-
-可以试：
-
-```bash
---cuda-graph-impl transformer_engine \
---cuda-graph-scope attn moe_router moe_preprocess
-```
-
-如果你的版本不支持这些 scope，就先用 attention-only：
-
-```bash
---cuda-graph-scope attn
-```
-
----
-
-## 你要特别避免的方向
-
-### 1. 不要再用外部 busy kernel
-
-你已经验证了它会让训练耗时翻倍。它提升的是监控数字，不是训练效率。
-
-### 2. 不要为了 SM Active 盲目增大无效计算
-
-比如增大 padding、强行 pad expert input 到 capacity，可能让 shape 更静态、更容易 graph capture，但也可能增加大量无效 expert GEMM。只有当它换来了 CUDA Graph / grouped kernel / overlap 的收益时才值得。
-
-### 3. 不要只看 SM Active
-
-MoE 训练里更重要的是：
-
-```text
-tokens/s
-step time
-MFU
-NCCL exposed time
-expert GEMM efficiency
-load balance
-```
-
-SM Active 从 35% 提到 60%，但 step time 不变，可能只是把以前等待的时间填上了；这有价值。
-SM Active 从 35% 提到 80%，但 step time 翻倍，那就是反优化。
-
----
-
-## 一个比较现实的判断
-
-如果你的 MoE 训练当前 `SM Active≈35%`，最可能的真实瓶颈排序是：
-
-```text
-1. EP All-to-All / token dispatch 暴露
-2. expert GEMM 太小，Grouped GEMM 没开或效果不足
-3. router/permute/unpermute 小 kernel 太多
-4. CPU launch gap / Python GC 抖动
-5. pipeline bubble 或 TP/CP/PP 映射过度切分
-6. expert load imbalance
-```
-
-最小改动建议就是：
-
-```bash
---moe-grouped-gemm \
---moe-router-fusion \
---moe-permute-fusion \
---overlap-moe-expert-parallel-comm \
---use-distributed-optimizer \
---overlap-param-gather \
---overlap-grad-reduce \
---tp-comm-overlap \
---manual-gc \
---manual-gc-interval 100
-```
-
-如果 EP dispatcher 仍是瓶颈，再试：
-
-```bash
---moe-token-dispatcher-type flex \
---moe-flex-dispatcher-backend deepep
-```
-
-或硬件合适时：
-
-```bash
---moe-token-dispatcher-type flex \
---moe-flex-dispatcher-backend hybridep
-```
-
-一句话：**可以在速度几乎不变甚至更快的情况下提高 SM Active，但要靠 Megatron MoE 本身的 grouped GEMM、fusion、dispatcher、communication overlap、CUDA Graph 和更合理 parallel mapping；不能靠外部脚本。**
-
-[1]: https://docs.nvidia.com/nemo/megatron-bridge/nightly/training/moe-optimization.html "MoE Training Optimization — Megatron Bridge"
-[2]: https://docs.nvidia.com/megatron-core/developer-guide/latest/user-guide/features/moe.html "Mixture of Experts — Megatron Core"
-[3]: https://docs.nvidia.com/megatron-core/developer-guide/0.15.0/api-guide/moe.html "Mixture of Experts package — Megatron-LM"
-[4]: https://docs.nvidia.com/nemo/megatron-bridge/latest/performance-guide.html "Performance Tuning Guide — Megatron Bridge"
+ing moe_router_dtype for better numerical stability.
+  warnings.warn(
+[rank2]: Traceback (most recent call last):
+[rank2]:   File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/pretrain_gpt.py", line 342, in <module>
+[rank2]:     pretrain(
+[rank2]:   File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/training/training.py", line 1031, in pretrain
+[rank2]:     iteration, num_floating_point_operations_so_far = train(
+[rank2]:                                                       ^^^^^^
+[rank2]:   File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/training/training.py", line 2795, in train
+[rank2]:     ) = train_step(
+[rank2]:         ^^^^^^^^^^^
+[rank2]:   File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/training/training.py", line 1703, in train_step
+[rank2]:     update_successful, grad_norm, num_zeros_in_grad = optimizer.step()
+[rank2]:                                                       ^^^^^^^^^^^^^^^^
+[rank2]:   File "/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 120, in decorate_context
+[rank2]:     return func(*args, **kwargs)
+[rank2]:            ^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/core/optimizer/optimizer.py", line 1314, in step
+[rank2]:     grad_norm = self.get_grad_norm()
+[rank2]:                 ^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 120, in decorate_context
+[rank2]:     return func(*args, **kwargs)
+[rank2]:            ^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/core/optimizer/optimizer.py", line 1277, in get_grad_norm
+[rank2]:     grad_norm = get_grad_norm_fp32(
+[rank2]:                 ^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/core/optimizer/clip_grads.py", line 130, in get_grad_norm_fp32
+[rank2]:     torch.distributed.all_reduce(
+[rank2]:   File "/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/distributed/c10d_logger.py", line 81, in wrapper
+[rank2]:     return func(*args, **kwargs)
+[rank2]:            ^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/distributed/distributed_c10d.py", line 2935, in all_reduce
+[rank2]:     work = group.allreduce([tensor], opts)
+[rank2]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]: torch.distributed.DistBackendError: NCCL error in: /pytorch/torch/csrc/distributed/c10d/NCCLUtils.cpp:94, unhandled cuda error (run with NCCL_DEBUG=INFO for details), NCCL version 2.27.7
+[rank2]: ncclUnhandledCudaError: Call to CUDA function failed.
+[rank2]: Last error:
+[rank2]: Failed to CUDA calloc async 23648 bytes
+[2026-05-12 08:55:22,017] [INFO] [launch.py:335:sigkill_handler] Killing subprocess 3404077
+Stack (most recent call first):
+  File "/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/distributed/distributed_c10d.py", line 2935 in all_reduce
+  File "/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/distributed/c10d_logger.py", line 81 in wrapper
+  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/core/optimizer/clip_grads.py", line 130 in get_grad_norm_fp32
+  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/core/optimizer/optimizer.py", line 1277 in get_grad_norm
+  File "/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 120 in decorate_context
+  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/core/optimizer/optimizer.py", line 1314 in step
+  File "/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 120 in decorate_context
+  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/training/training.py", line 1703 in train_step
+  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/training/training.py", line 2795 in train
+  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/training/training.py", line 1031 in pretrain
+  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/pretrain_gpt.py", line 342 in <module>
+[2026-05-12 08:55:22,910] [INFO] [launch.py:335:sigkill_handler] Killing subprocess 3404078
+Stack (most recent call first):
+  File "/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/distributed/distributed_c10d.py", line 2935 in all_reduce
+  File "/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/distributed/c10d_logger.py", line 81 in wrapper
+  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/core/optimizer/clip_grads.py", line 130 in get_grad_norm_fp32
+  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/core/optimizer/optimizer.py", line 1277 in get_grad_norm
+  File "/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 120 in decorate_context
+  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/core/optimizer/optimizer.py", line 1314 in step
+  File "/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 120 in decorate_context
+  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/training/training.py", line 1703 in train_step
+  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/training/training.py", line 2795 in train
+  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/training/training.py", line 1031 in pretrain
+  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/pretrain_gpt.py", line 342 in <module>
+[rank3]:[W512 08:55:22.206320433 TCPStore.cpp:125] [c10d] recvValue failed on SocketImpl(fd=76, addr=[llm_7]:60212, remote=[llm_7]:29500): Failed to recv, got 0 bytes. Connection was likely closed. Did the remote server shutdown or crash?
+Exception raised from recvBytes at /pytorch/torch/csrc/distributed/c10d/Utils.hpp:682 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0xb0 (0xf52eb9d9c700 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libc10.so)
+frame #1: <unknown function> + 0x5f288c0 (0xf52edb3288c0 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cpu.so)
+frame #2: <unknown function> + 0x5f2b864 (0xf52edb32b864 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cpu.so)
+frame #3: <unknown function> + 0x5f2ced4 (0xf52edb32ced4 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cpu.so)
+frame #4: c10d::TCPStore::check(std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > > const&) + 0x224 (0xf52edb32eab4 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cpu.so)
+frame #5: c10d::ProcessGroupNCCL::HeartbeatMonitor::runLoop() + 0x328 (0xf52ebaa08de8 in /cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so)
+frame #6: <unknown function> + 0xe1ae0 (0xf52eec911ae0 in /lib/aarch64-linux-gnu/libstdc++.so.6)
+frame #7: <unknown function> + 0x8595c (0xf52eedb2595c in /lib/aarch64-linux-gnu/libc.so.6)
+frame #8: <unknown function> + 0xebb0c (0xf52eedb8bb0c in /lib/aarch64-linux-gnu/libc.so.6)
+
+[rank3]:[W512 08:55:23.257021146 ProcessGroupNCCL.cpp:1771] [PG ID 0 PG GUID 0(default_pg) Rank 3] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Failed to recv, got 0 bytes. Connection was likely closed. Did the remote server shutdown or crash?
+[2026-05-12 08:55:23,794] [INFO] [launch.py:335:sigkill_handler] Killing subprocess 3404079
+[2026-05-12 08:55:23,794] [INFO] [launch.py:335:sigkill_handler] Killing subprocess 3404080
+Stack (most recent call first):
+  File "/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/distributed/distributed_c10d.py", line 2935 in all_reduce
+  File "/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/distributed/c10d_logger.py", line 81 in wrapper
+  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/core/optimizer/clip_grads.py", line 130 in get_grad_norm_fp32
+  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/core/optimizer/optimizer.py", line 1277 in get_grad_norm
+  File "/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 120 in decorate_context
+  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/core/optimizer/optimizer.py", line 1314 in step
+  File "/cpfs01/laiqingsi/project/moe/venv_megatron/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 120 in decorate_context
+  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/training/training.py", line 1703 in train_step
+  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/training/training.py", line 2795 in train
+  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/megatron/training/training.py", line 1031 in pretrain
+  File "/cpfs01/laiqingsi/Megatron-LM-core_v0.16.1/pretrain_gpt.py", line 342 in <module>
+[2026-05-12 08:55:24,683] [ERROR] [launch.py:341:sigkill_handler] ['/cpfs01/laiqingsi/project/moe/venv_megatron/bin/python3.12', '-u', 'pretrain_gpt.py', '--local_rank=3', '--seed', '1234', '--padded-vocab-size', '151936', '--save', '/cpfs01/laiqingsi/project/moe/output/megatron_qwen3_9BA1B_stage1//checkpoint/pretrain-mcore-qwen3-moe-megatron-A1B-lr-5E-4-minlr-5E-5-bs-8-gbs-4096-seqlen-4096-pr-bf16-tp-1-pp-1-cp-1-ac-none-do-true-sp-false-ti-720000-wi-2000', '--load', '/cpfs01/laiqingsi/project/moe/output/megatron_qwen3_9BA1B_stage1//checkpoint/pretrain-mcore-qwen3-moe-megatron-A1B-lr-5E-4-minlr-5E-5-bs-8-gbs-4096-seqlen-4096-pr-bf16-tp-1-pp-1-cp-1-ac-none-do-true-sp-false-ti-720000-wi-2000', '--tensorboard-dir', '/cpfs01/laiqingsi/project/moe/output/megatron_qwen3_9BA1B_stage1//tensorboard/pretrain-mcore-qwen3-moe-megatron-A1B-lr-5E-4-minlr-5E-5-bs-8-gbs-4096-seqlen-4096-pr-bf16-tp-1-pp-1-cp-1-ac-none-do-true-sp-false-ti-720000-wi-2000_2026.05.12-08.38.40', '--lr', '5E-4', '--min-lr', '5E-5', '--lr-decay-style', 'cosine', '--weight-decay', '0.1', '--adam-beta1', '0.9', '--adam-beta2', '0.95', '--clip-grad', '1.0', '--init-method-std', '0.008', '--attention-dropout', '0.0', '--hidden-dropout', '0.0', '--lr-decay-iters', '720000', '--lr-warmup-iters', '2000', '--train-iters', '720000', '--micro-batch-size', '8', '--global-batch-size', '4096', '--num-layers', '28', '--hidden-size', '1536', '--num-attention-heads', '16', '--ffn-hidden-size', '4096', '--seq-length', '4096', '--max-position-embeddings', '40960', '--log-interval', '1', '--log-throughput', '--eval-interval', '10000', '--eval-iters', '10', '--save-interval', '50', '--tensorboard-queue-size', '1', '--log-timers-to-tensorboard', '--log-validation-ppl-to-tensorboard', '--tensor-model-parallel-size', '1', '--pipeline-model-parallel-size', '1', '--context-parallel-size', '1', '--num-workers', '0', '--tokenizer-type', 'HuggingFaceTokenizer', '--tokenizer-model', '/cpfs01/liuwengang/model/Qwen3-30BA3B-config/', '--swiglu', '--normalization', 'RMSNorm', '--norm-epsilon', '1e-6', '--use-rotary-position-embeddings', '--position-embedding-type', 'rope', '--group-query-attention', '--num-query-groups', '4', '--disable-bias-linear', '--rotary-base', '10000', '--ckpt-format', 'torch', '--transformer-impl', 'transformer_engine', '--cross-entropy-loss-fusion', '--qk-layernorm', '--kv-channels', '128', '--moe-permute-fusion', '--moe-router-fusion', '--data-path', '0.00442854048882036', '/cpfs01/bufanjie/tokenization_data/en_tokenization/fineweb_edu/STEM/_text_document', '0.00199607573127487', '/cpfs01/bufanjie/tokenization_data/en_tokenization/fineweb_edu/SS/_text_document', '0.00406488296692818', '/cpfs01/bufanjie/tokenization_data/en_tokenization/fineweb_edu/Hum/_text_document', '0.00371738800156454', '/cpfs01/bufanjie/tokenization_data/en_tokenization/fineweb_edu/Other/_text_document', '0.0111521640046936', '/cpfs01/bufanjie/tokenization_data/en_tokenization/Nemotron-cc-2.0-HQ/STEM/_text_document', '0.00977834669976758', '/cpfs01/bufanjie/tokenization_data/en_tokenization/Nemotron-cc-2.0-HQ/SS/_text_document', '0.0110713512220509', '/cpfs01/bufanjie/tokenization_data/en_tokenization/Nemotron-cc-2.0-HQ/Hum/_text_document', '0.0136573602666175', '/cpfs01/bufanjie/tokenization_data/en_tokenization/Nemotron-cc-2.0-HQ/Other/_text_document', '0.00758832029015022', '/cpfs01/bufanjie/tokenization_data/en_tokenization/dclm/stem/_text_document', '0.00699030569859418', '/cpfs01/bufanjie/tokenization_data/en_tokenization/dclm/ss/_text_document', '0.012566387700941', '/cpfs01/bufanjie/tokenization_data/en_tokenization/dclm/hum/_text_document', '0.0130674269533258', '/cpfs01/bufanjie/tokenization_data/en_tokenization/dclm/other/_text_document', '0.00998037865637435', '/cpfs01/bufanjie/tokenization_data/en_tokenization/ocr_pdf/stem/_text_document', '0.00398407018428547', '/cpfs01/bufanjie/tokenization_data/en_tokenization/ocr_pdf/ss/_text_document', '0.00185869400078227', '/cpfs01/bufanjie/tokenization_data/en_tokenization/ocr_pdf/hum/_text_document', '0.00293350400993028', '/cpfs01/bufanjie/tokenization_data/en_tokenization/ocr_pdf/other/_text_document', '0.00130108580054759', '/cpfs01/bufanjie/tokenization_data/en_tokenization/nemotron-cc-2.1_cc/hq/stem/_text_document', '0.00112329767873363', '/cpfs01/bufanjie/tokenization_data/en_tokenization/nemotron-cc-2.1_cc/hq/ss/_text_document', '0.000953590835183946', '/cpfs01/bufanjie/tokenization_data/en_tokenization/nemotron-cc-2.1_cc/hq/hum/_text_document', '0.00186677527904654', '/cpfs01/bufanjie/tokenization_data/en_tokenization/nemotron-cc-2.1_cc/hq/other/_text_document', '0.000285269122728757', '/cpfs01/bufanjie/tokenization_data/en_tokenization/nemotron-cc-2.1_cc/mhq/stem/_text_document', '0.000305472318389434', '/cpfs01/bufanjie/tokenization_data/en_tokenization/nemotron-cc-2.1_cc/mhq/ss/_text_document', '0.000293350400993028', '/cpfs01/bufanjie/tokenization_data/en_tokenization/nemotron-cc-2.1_cc/mhq/hum/_text_document', '0.000463057244542713', '/cpfs01/bufanjie/tokenization_data/en_tokenization/nemotron-cc-2.1_cc/mhq/other/_text_document', '0.00223043280093872', '/cpfs01/bufanjie/tokenization_data/en_tokenization/cc_other/books/_text_document', '0.0053013185413616', '/cpfs01/bufanjie/tokenization_data/en_tokenization/cc_other/wiki/_text_document', '0.00227083919226008', '/cpfs01/bufanjie/tokenization_data/en_tokenization/cc_other/red_other/_text_document', '0.000441237793229182', '/cpfs01/bufanjie/tokenization_data/en_tokenization/cc_other/stem_heavy_crawl/_text_document', '0.0197587253561419', '/cpfs01/bufanjie/tokenization_data/en_tokenization/v2.0-DQA/STEM/_text_document', '0.0122835429616915', '/cpfs01/bufanjie/tokenization_data/en_tokenization/v2.0-DQA/SS/_text_document', '0.0125259813096196', '/cpfs01/bufanjie/tokenization_data/en_tokenization/v2.0-DQA/Hum/_text_document', '0.0176171866161102', '/cpfs01/bufanjie/tokenization_data/en_tokenization/v2.0-DQA/Other/_text_document', '0.0288307683356123', '/cpfs01/bufanjie/tokenization_data/en_tokenization/v2.0-hq-syn/stem/_text_document', '0.0218841015396451', '/cpfs01/bufanjie/tokenization_data/en_tokenization/v2.0-hq-syn/ss/_text_document', '0.0238316896013344', '/cpfs01/bufanjie/tokenization_data/en_tokenization/v2.0-hq-syn/hum/_text_document', '0.0304745003345649', '/cpfs01/bufanjie/tokenization_data/en_tokenization/v2.0-hq-syn/other/_text_document', '0.00407296424519245', '/cpfs01/bufanjie/tokenization_data/en_tokenization/t1_t2_syn/cci4.0-arxiv-wiki/_text_document', '0.000678827374198742', '/cpfs01/bufanjie/tokenization_data/en_tokenization/t1_t2_syn/nemotron-2.1-dqa/_text_document', '0.0075640764553574', '/cpfs01/bufanjie/tokenization_data/en_tokenization/t1_t2_syn/nemotron-2.1-hq-syn/_text_document', '0.00619025915043138', '/cpfs01/bufanjie/tokenization_data/en_tokenization/t1_t2_syn/nemotron-2.1-hqt-syn-part1/_text_document', '0.00644077877662377', '/cpfs01/bufanjie/tokenization_data/en_tokenization/t1_t2_syn/nemotron-2.1-hqt-syn-part2/_text_document', '0.00169706843549685', '/cpfs01/bufanjie/tokenization_data/en_tokenization/spec-v1/i_s/_text_document', '0.011701690926664', '/cpfs01/bufanjie/tokenization_data/en_tokenization/spec-v1/rqa/_text_document', '0.0069579805855371', '/cpfs01/bufanjie/tokenization_data/en_tokenization/spec-v1/stem-sft/_text_document', '0.00418610214089224', '/cpfs01/bufanjie/tokenization_data/en_tokenization/mga/score3_part1/_text_document', '0.00279612227943767', '/cpfs01/bufanjie/tokenization_data/en_tokenization/mga/score3_part2/_text_document', '0.00279612227943767', '/cpfs01/bufanjie/tokenization_data/en_tokenization/mga/score3_part3/_text_document', '0.0033698930362009', '/cpfs01/bufanjie/tokenization_data/en_tokenization/mga/score4_part1/_text_document', '0.00493766101946942', '/cpfs01/bufanjie/tokenization_data/en_tokenization/mga/score4_part2/_text_document', '0.0033698930362009', '/cpfs01/bufanjie/tokenization_data/en_tokenization/mga/score4_part3/_text_document', '0.0033698930362009', '/cpfs01/bufanjie/tokenization_data/en_tokenization/mga/score4_part4/_text_document', '0.0033698930362009', '/cpfs01/bufanjie/tokenization_data/en_tokenization/mga/score4_part5/_text_document', '0.00714384998561533', '/cpfs01/bufanjie/tokenization_data/en_tokenization/mga/score5_part1/_text_document', '0.00712768742908679', '/cpfs01/bufanjie/tokenization_data/en_tokenization/mga/score5_part2/_text_document', '0.00714384998561533', '/cpfs01/bufanjie/tokenization_data/en_tokenization/mga/score5_part3/_text_document', '0.00192334422689643', '/cpfs01/bufanjie/tokenization_data/en_tokenization/dolma3-en-syn/part1/_text_document', '0.0019314255051607', '/cpfs01/bufanjie/tokenization_data/en_tokenization/dolma3-en-syn/part2/_text_document', '0.00195566933995352', '/cpfs01/bufanjie/tokenization_data/en_tokenization/dolma3-en-syn/part3/_text_document', '0.00193950678342498', '/cpfs01/bufanjie/tokenization_data/en_tokenization/dolma3-en-syn/part4/_text_document', '0.00225467663573153', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_other/bench/general_sft_zy_part1/_text_document', '0.00128492324401905', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_other/bench/general_sft_zy_part2/_text_document', '0.00247287114886684', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_other/bench/general_sft_zy_part3/_text_document', '0.00737012577701491', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/zh_stem/PART1/_text_document', '0.00313553596653704', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/zh_stem/PART2/_text_document', '0.00572154501110368', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/zh_stem/PART3/_text_document', '0.00402447657560682', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/zh_stem/PART4/_text_document', '0.00269914694026642', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/zh_stem/PART5/_text_document', '0.0051073678630191', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/zh_stem/PART6/_text_document', '0.00203648212259622', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/zh_stem/PART7/_text_document', '0.00544678155011847', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/zh_stem/PART8/_text_document', '0.00368506288850745', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/zh_stem/PART9/_text_document', '0.00473966970199478', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq_ss/PART1/_text_document', '0.0031759423578584', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq_ss/PART2/_text_document', '0.00389113548424636', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq_ss/PART3/_text_document', '0.0015879711789292', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq_ss/PART4/_text_document', '0.00404872041039964', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq_ss/PART5/_text_document', '0.00275167524898418', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq_ss/PART6/_text_document', '0.00386689164945354', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq_ss/PART7/_text_document', '0.00305472318389434', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq_ss/PART8/_text_document', '0.00375779439288589', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq_ss/PART9/_text_document', '0.00432752451051698', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq_ss/PART10/_text_document', '0.00315169852306558', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq_ss/PART11/_text_document', '0.00229104238792075', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq_ss/PART12/_text_document', '0.00252135881845247', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq_ss/PART13/_text_document', '0.00266682182720934', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq_ss/PART14/_text_document', '0.00281228483596621', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq-hum_mq-hum-ss78910/hq_hun/part1/_text_document', '0.00311533277087637', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq-hum_mq-hum-ss78910/hq_hun/part2/_text_document', '0.00475179161939119', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq-hum_mq-hum-ss78910/hq_hun/part3/_text_document', '0.00323655194484043', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq-hum_mq-hum-ss78910/hq_hun/part4/_text_document', '0.00488028394379309', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq-hum_mq-hum-ss78910/hq_hun/part5/_text_document', '0.00347899029276855', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq-hum_mq-hum-ss78910/hq_hun/part6/_text_document', '0.00344262454057933', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_mq_stem_ss/STEM_part1/_text_document', '0.00361233138412902', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_mq_stem_ss/STEM_part2/_text_document', '0.00352747796235417', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_mq_stem_ss/STEM_part3/_text_document', '0.00385476973205714', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_mq_stem_ss/STEM_part4/_text_document', '0.00350323412756136', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_mq_stem_ss/STEM_part5/_text_document', '0.00398811082341761', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_mq_stem_ss/STEM_part6/_text_document', '0.00393962315383198', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_mq_stem_ss/STEM_part7/_text_document', '0.00385476973205714', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_mq_stem_ss/STEM_part8/_text_document', '0.00393962315383198', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_mq_stem_ss/STEM_part9/_text_document', '0.00370930672330027', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_mq_stem_ss/STEM_part10/_text_document', '0.00227083919226008', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_mq_stem_ss/Social_Science_part1/_text_document', '0.00213345746176747', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_mq_stem_ss/Social_Science_part2/_text_document', '0.0021819451313531', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_mq_stem_ss/Social_Science_part3/_text_document', '0.002925422731666', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_mq_stem_ss/Social_Science_part4/_text_document', '0.00189101911383935', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_mq_stem_ss/Social_Science_part5/_text_document', '0.0019879944530106', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_mq_stem_ss/Social_Science_part6/_text_document', '0.00252135881845247', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq-hum_mq-hum-ss78910/mq_ss_789/part7/_text_document', '0.0017940437746681', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq-hum_mq-hum-ss78910/mq_ss_789/part8/_text_document', '0.00202031956606768', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq-hum_mq-hum-ss78910/mq_ss_789/part9/_text_document', '0.0011313789569979', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq-hum_mq-hum-ss78910/mq_ss_789/part10/_text_document', '0.00282036611423049', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq-hum_mq-hum-ss78910/mq_hum/part1/_text_document', '0.00264257799241653', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq-hum_mq-hum-ss78910/mq_hum/part2/_text_document', '0.00320826747091548', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq-hum_mq-hum-ss78910/mq_hum/part3/_text_document', '0.00286077250555184', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_cc_hq-hum_mq-hum-ss78910/mq_hum/part4/_text_document', '0.00394366379296412', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/stem_part1/_text_document', '0.00525283087177598', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/stem_part2/_text_document', '0.003701225445036', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/stem_part3/_text_document', '0.00365273777545037', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/stem_part4/_text_document', '0.00407296424519245', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/stem_part5/_text_document', '0.00371738800156454', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/stem_part6/_text_document', '0.00355576243627912', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/stem_part7/_text_document', '0.00379820078420724', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/stem_part8/_text_document', '0.00395982634949266', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/stem_part9/_text_document', '0.00475179161939119', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/stem_part10/_text_document', '0.00283652867075903', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/ss_part1/_text_document', '0.00247287114886684', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/ss_part2/_text_document', '0.0027880410011734', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/ss_part3/_text_document', '0.00225467663573153', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/ss_part4/_text_document', '0.00237589580969559', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/ss_part5/_text_document', '0.00312745468827277', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/ss_part6/_text_document', '0.00282440675336262', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/ss_part7/_text_document', '0.0021940670487495', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/hum_part1/_text_document', '0.00250923690105606', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/hum_part2/_text_document', '0.00288501634034465', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_hq/hum_part3/_text_document', '0.00172131227028967', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_lq/stem_part1/_text_document', '0.00178596249640383', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_lq/stem_part2/_text_document', '0.00172939354855394', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_lq/ss_part1/_text_document', '0.00164049948764696', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_lq/ss_part2/_text_document', '0.00178596249640383', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_lq/ss_part3/_text_document', '0.00113946023526217', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_lq/hum_part1/_text_document', '0.0013253296353404', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/cn_syn_zy_lq/hum_part2/_text_document', '0.00189101911383935', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/wx-cn-syn_shq_pdf-ocr-cn/cn_cc_shq/stem_part1/_text_document', '0.00211729490523893', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/wx-cn-syn_shq_pdf-ocr-cn/cn_cc_shq/stem_part2/_text_document', '0.00168898715723258', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/wx-cn-syn_shq_pdf-ocr-cn/cn_cc_shq/other_part1/_text_document', '0.00134957347013321', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/wx-cn-syn_shq_pdf-ocr-cn/cn_cc_shq/other_part2/_text_document', '0.00188293783557508', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/wx-cn-syn_shq_pdf-ocr-cn/cn_cc_shq/other_part3/_text_document', '0.00189910039210362', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/wx-cn-syn_shq_pdf-ocr-cn/cn_cc_shq/other_part4/_text_document', '0.00438005281923474', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/wx-cn-syn_shq_pdf-ocr-cn/cn_wx_syn/part1/_text_document', '0.00517201808913327', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/wx-cn-syn_shq_pdf-ocr-cn/cn_wx_syn/part2/_text_document', '0.00452551582799161', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/wx-cn-syn_shq_pdf-ocr-cn/cn_wx_syn/part3/_text_document', '0.00117986662658353', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/wx-cn-syn_shq_pdf-ocr-cn/PDF_OCR_CN/stem_part1/_text_document', '0.00130916707881186', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/wx-cn-syn_shq_pdf-ocr-cn/PDF_OCR_CN/stem_part2/_text_document', '0.00101015978303384', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/wx-cn-syn_shq_pdf-ocr-cn/PDF_OCR_CN/other_part1/_text_document', '0.000969753391712488', '/cpfs01/bufanjie/tokenization_data/zh_tokenization/wx-cn-syn_shq_pdf-ocr-cn/PDF_OCR_CN/other_part2/_text_document', '0.0258600904456663', '/cpfs01/bufanjie/tokenization_data/math_tokenization/5_score/_text_document', '0.00185869400078227', '/cpfs01/bufanjie/tokenization_data/math_tokenization/megamath_web_pro/_text_document', '0.00480836056724109', '/cpfs01/bufanjie/tokenization_data/math_tokenization/dolma3-math/_text_document', '0.00561648839366816', '/cpfs01/bufanjie/tokenization_data/math_tokenization/math_textbook/_text_document', '0.0505888019343348', '/cpfs01/bufanjie/tokenization_data/math_tokenization/4_score/_text_document', '0.0169706843549685', '/cpfs01/bufanjie/tokenization_data/math_tokenization/3_score/_text_document', '0.00454167838452015', '/cpfs01/bufanjie/tokenization_data/code_tokenization/code-sft_stack_starcoder/Nemotron-SFT-Code-tokenization/part1/_text_document', '0.00499422996731931', '/cpfs01/bufanjie/tokenization_data/code_tokenization/code-sft_stack_starcoder/Nemotron-SFT-Code-tokenization/part2/_text_document', '0.00302239807083725', '/cpfs01/bufanjie/tokenization_data/code_tokenization/code-sft_stack_starcoder/stack-v2-train-full-ids/3_python/_text_document', '0.00475179161939119', '/cpfs01/bufanjie/tokenization_data/code_tokenization/code-sft_stack_starcoder/stack-v2-train-full-ids/3_md/_text_document', '0.0126229566487909', '/cpfs01/bufanjie/tokenization_data/code_tokenization/code-sft_stack_starcoder/stack-v2-train-full-ids/3_other/_text_document', '0.0035880875493362', '/cpfs01/bufanjie/tokenization_data/code_tokenization/code-sft_stack_starcoder/stack-v2-train-full-ids/4_md/_text_document', '0.00153544287021144', '/cpfs01/bufanjie/tokenization_data/code_tokenization/code-sft_stack_starcoder/stack-v2-train-full-ids/4_5_other/_text_document', '0.0106672873088374', '/cpfs01/bufanjie/tokenization_data/code_tokenization/code-sft_stack_starcoder/stack-v2-train-full-ids/2_part1/_text_document', '0.0101743293347169', '/cpfs01/bufanjie/tokenization_data/code_tokenization/code-sft_stack_starcoder/stack-v2-train-full-ids/2_part2/_text_document', '0.00690141163768721', '/cpfs01/bufanjie/tokenization_data/code_tokenization/code-sft_stack_starcoder/starcoder/2/_text_document', '0.00496190485426223', '/cpfs01/bufanjie/tokenization_data/code_tokenization/code-sft_stack_starcoder/starcoder/3/_text_document', '0.00153544287021144', '/cpfs01/bufanjie/tokenization_data/code_tokenization/code-sft_stack_starcoder/starcoder/45/_text_document', '0.00390325740164276', '/cpfs01/bufanjie/tokenization_data/code_tokenization/dolom3/2/_text_document', '0.0132856214664611', '/cpfs01/bufanjie/tokenization_data/code_tokenization/dolom3/3/_text_document', '0.00362041266239329', '/cpfs01/bufanjie/tokenization_data/code_tokenization/dolom3/45/_text_document', '8.88940609069781e-05', '/cpfs01/bufanjie/tokenization_data/code_tokenization/starcoder_text/2/_text_document', '0.00135765474839748', '/cpfs01/bufanjie/tokenization_data/code_tokenization/starcoder_text/3/_text_document', '0.000533364365441868', '/cpfs01/bufanjie/tokenization_data/code_tokenization/starcoder_text/45/_text_document', '0.0017940437746681', '/cpfs01/bufanjie/tokenization_data/code_tokenization/nemotron-code-v2/2/_text_document', '0.00838836683831302', '/cpfs01/bufanjie/tokenization_data/code_tokenization/nemotron-code-v2/3_part1/_text_document', '0.00819441615997052', '/cpfs01/bufanjie/tokenization_data/code_tokenization/nemotron-code-v2/3_part2/_text_document', '0.00898638142986905', '/cpfs01/bufanjie/tokenization_data/code_tokenization/nemotron-code-v2/3_part3/_text_document', '0.0122188927355773', '/cpfs01/bufanjie/tokenization_data/code_tokenization/nemotron-code-v2/4_part1/_text_document', '0.00890556864722635', '/cpfs01/bufanjie/tokenization_data/code_tokenization/nemotron-code-v2/4_part2/_text_document', '0.0108450754306513', '/cpfs01/bufanjie/tokenization_data/code_tokenization/nemotron-code-v2/4_part3/_text_document', '0.00670746095934471', '/cpfs01/bufanjie/tokenization_data/code_tokenization/nemotron-code-v2/5/_text_document', '--split', '99,1,0', '--bf16', '--use-distributed-optimizer', '--moe-grouped-gemm', '--moe-token-dispatcher-type', 'alltoall', '--moe-router-topk', '8', '--num-experts', '128', '--expert-tensor-parallel-size', '1', '--expert-model-parallel-size', '4', '--moe-ffn-hidden-size', '512', '--moe-router-load-balancing-type', 'aux_loss', '--moe-aux-loss-coeff', '0.001', '--moe-layer-freq', '[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]', '--moe-router-pre-softmax', '--overlap-grad-reduce', '--overlap-param-gather', '--attention-backend', 'fused'] exits with return code = 1
