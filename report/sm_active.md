@@ -1,251 +1,187 @@
-针对当前 Megatron-LM main 分支，`get_grad_norm_fp32(..., norm_type=...)` 的结论是：
-
-**一般不会改。默认就是 `norm_type=2`，也就是 global L2 norm；Megatron 当前没有提供启动参数来改这个 `norm_type`。**
-
-`get_grad_norm_fp32` 的函数签名里写的是：
-
-```python
-def get_grad_norm_fp32(
-    grads_for_norm,
-    norm_type: Union[int, float] = 2,
-    grad_stats_parallel_group=None,
-) -> float:
-```
-
-它的注释也说明 `norm_type` 是 p-norm 类型，支持 infinity norm，默认值是 `2`。([GitHub][1])
-
-## 1. `norm_type` 默认是什么？
-
-默认是：
-
-```text
-norm_type = 2
-```
-
-也就是 **global L2 norm**。
-
-Megatron 的 `--clip-grad` 参数说明也直接写的是：
-
-```text
-Gradient clipping based on global L2 norm.
-```
-
-而且默认值是 `1.0`。注意，这里的 `1.0` 是 **max_norm 阈值**，不是 `norm_type`。([GitHub][2])
-
-所以默认语义是：
-
-```text
-global_grad_norm = 所有参与裁剪的梯度组成一个大向量后的 L2 norm
-如果 global_grad_norm > clip_grad:
-    按 clip_grad / global_grad_norm 缩放梯度
-```
-
----
-
-## 2. 有没有配置参数可以改 `norm_type`？
-
-**没有。**
-
-当前代码里没有类似下面这种参数：
-
-```bash
---grad-norm-type
---clip-grad-norm-type
---norm-type
-```
-
-`--clip-grad` 只能改裁剪阈值，例如：
-
-```bash
---clip-grad 1.0
---clip-grad 0.5
---clip-grad 0
-```
-
-它不改变 L2 / L1 / L∞ 的范数类型。Megatron 的 argument 和 optimizer config 里都只有 `clip_grad`，说明也是 “global L2 norm”，没有 `norm_type` 字段。([GitHub][2])
-
----
-
-## 3. 为什么实际总是 L2？
-
-因为调用 `get_grad_norm_fp32()` 的地方基本都**没有传 `norm_type`**，于是就吃函数默认值 `2`。
-
-普通 optimizer wrapper 里：
-
-```python
-total_norm = get_grad_norm_fp32(
-    grads_for_norm,
-    grad_stats_parallel_group=self.get_grad_stats_parallel_group()
-)
-```
-
-`clip_grad_norm()` 里也是一样，没有传 `norm_type`。([GitHub][3])
-
-`ChainedOptimizer.get_grad_norm()` 里也是默认 L2；如果多个 optimizer 的 grad stats group 不共享，它还会用：
-
-```python
-grad_norm = math.sqrt(sum([x**2 for x in grad_norms]))
-```
-
-这本身就是 L2 合成规则。([GitHub][3])
-
-Layer-wise optimizer 路径里也同样直接调用：
-
-```python
-get_grad_norm_fp32(grads_for_norm, grad_stats_parallel_group=None)
-```
-
-没有传 `norm_type`。([GitHub][4])
-
----
-
-## 4. 如果真的要改，应该改哪里？
-
-没有现成配置参数。你需要改代码，最小修改点是这些调用处。
-
-### 普通 optimizer 路径
-
-文件：
-
-```text
-megatron/core/optimizer/optimizer.py
-```
-
-把 `MegatronOptimizer.get_grad_norm()` 和 `MegatronOptimizer.clip_grad_norm()` 里的调用改成：
-
-```python
-total_norm = get_grad_norm_fp32(
-    grads_for_norm,
-    norm_type=your_norm_type,
-    grad_stats_parallel_group=self.get_grad_stats_parallel_group(),
-)
-```
-
-例如改成 infinity norm：
-
-```python
-total_norm = get_grad_norm_fp32(
-    grads_for_norm,
-    norm_type=float("inf"),
-    grad_stats_parallel_group=self.get_grad_stats_parallel_group(),
-)
-```
-
-### ChainedOptimizer 路径
-
-如果你当前训练返回的是 `ChainedOptimizer`，还要改：
-
-```text
-megatron/core/optimizer/optimizer.py
-```
-
-里的：
-
-```python
-ChainedOptimizer.get_grad_norm()
-```
-
-尤其是这段：
-
-```python
-grad_norm = math.sqrt(sum([x**2 for x in grad_norms]))
-```
-
-如果你改成 L1 或 L∞，这里不能继续用 `sqrt(sum(x**2))`。比如：
-
-```python
-# L1 合成
-grad_norm = sum(grad_norms)
-
-# L∞ 合成
-grad_norm = max(grad_norms)
-```
-
-否则各子 optimizer 的 norm 合并方式就错了。([GitHub][3])
-
-### Layer-wise optimizer 路径
-
-如果你用的是 layer-wise distributed optimizer，还要看：
-
-```text
-megatron/core/optimizer/layer_wise_optimizer.py
-```
-
-它的 `get_grad_norm()` 也直接调用 `get_grad_norm_fp32()`，没有传 `norm_type`。([GitHub][4])
-
----
-
-## 5. `get_grad_norm_fp32` 内部对不同 `norm_type` 的处理
-
-它内部支持几种情况：
-
-```python
-norm_type = float(norm_type)
-
-if norm_type == inf:
-    # max(abs(grad))，并用 all_reduce MAX
-elif norm_type == 2.0:
-    # 用 multi_tensor_l2norm 优化路径
-else:
-    # 逐个 grad 调 torch.norm(grad, norm_type)
-```
-
-也就是说，**L2 是专门优化过的路径**；其他 p-norm 会走更通用的 `torch.norm` 循环，通常性能会差一些。([GitHub][1])
-
----
-
-## 6. 对你的配置该怎么理解？
-
-你现在是：
-
-```bash
---bf16
-```
-
-如果没有显式设置：
-
-```bash
---clip-grad 0
-```
-
-那默认就是：
-
-```bash
---clip-grad 1.0
-```
-
-所以使用的是：
-
-```text
-global L2 grad norm
-max_norm = 1.0
-norm_type = 2
-```
-
-`--bf16` 不会改变 `norm_type`。
-`--clip-grad` 只改阈值，不改 `norm_type`。
-
----
-
-## 7. 实际建议
-
-大模型训练里一般不建议随便改 `norm_type`。Megatron 当前默认和文档语义都是 **global L2 norm clipping**。你真正可能需要调的是：
-
-```bash
---clip-grad
-```
-
-比如：
-
-```bash
---clip-grad 1.0   # 默认
---clip-grad 0.5   # 更强裁剪
---clip-grad 0     # 关闭裁剪
-```
-
-如果你要从 L2 改成 L∞ 或 L1，没有现成参数；需要新增一个参数，比如 `--clip-grad-norm-type`，然后把它加到 `OptimizerConfig`，并传进 `get_grad_norm_fp32(..., norm_type=...)` 及 `ChainedOptimizer` 的 norm 合成逻辑里。
-
-[1]: https://github.com/NVIDIA/Megatron-LM/blob/main/megatron/core/optimizer/clip_grads.py "Megatron-LM/megatron/core/optimizer/clip_grads.py at main · NVIDIA/Megatron-LM · GitHub"
-[2]: https://raw.githubusercontent.com/NVIDIA/Megatron-LM/main/megatron/training/arguments.py "raw.githubusercontent.com"
-[3]: https://raw.githubusercontent.com/NVIDIA/Megatron-LM/main/megatron/core/optimizer/optimizer.py "raw.githubusercontent.com"
-[4]: https://github.com/NVIDIA/Megatron-LM/blob/main/megatron/core/optimizer/layer_wise_optimizer.py?utm_source=chatgpt.com "layer_wise_optimizer.py - NVIDIA/Megatron-LM"
+#include <cuda_runtime.h>
+#include <cstdio>
+#include <cstdlib>
+#include <cstdint>
+#include <thread>
+#include <vector>
+#include <chrono>
+#include <csignal>
+#include <algorithm>
+
+#define CUDA_CHECK(cudaCall) \
+	do \
+	{ \
+		cudaError_t cudaError = (cudaCall); \
+		if (cudaError != cudaSuccess) \
+		{ \
+			std::fprintf(stderr, "CUDA error at %s:%d: %s\n", __FILE__, __LINE__, cudaGetErrorString(cudaError)); \
+			std::exit(EXIT_FAILURE); \
+		} \
+	} while (0)
+
+volatile std::sig_atomic_t shouldStop = 0;
+
+void HandleSignal(int signalNumber)
+{
+	shouldStop = 1;
+}
+
+__global__ void KeepGpuUtilActiveSleepKernel(std::uint64_t* outputValue, unsigned long long durationCycles, unsigned int sleepNanoseconds)
+{
+	unsigned long long startClock = clock64();
+	unsigned long long currentClock = startClock;
+
+	std::uint64_t accumulator =
+		0x9E3779B97F4A7C15ULL ^
+		static_cast<std::uint64_t>(blockIdx.x) ^
+		static_cast<std::uint64_t>(threadIdx.x);
+
+	while ((currentClock - startClock) < durationCycles)
+	{
+#if __CUDA_ARCH__ >= 700
+		__nanosleep(sleepNanoseconds);
+#else
+		#pragma unroll 4
+		for (int iterationIndex = 0; iterationIndex < 16; ++iterationIndex)
+		{
+			accumulator ^= accumulator << 13;
+			accumulator ^= accumulator >> 7;
+			accumulator ^= accumulator << 17;
+			asm volatile("" : "+l"(accumulator));
+		}
+#endif
+		currentClock = clock64();
+	}
+
+	if (threadIdx.x == 0)
+	{
+		outputValue[0] = accumulator ^ currentClock;
+	}
+}
+
+void RunOnDevice(
+	int deviceIndex,
+	int totalSeconds,
+	int kernelMilliseconds,
+	int threadsPerBlock,
+	unsigned int sleepNanoseconds)
+{
+	CUDA_CHECK(cudaSetDevice(deviceIndex));
+
+	int clockRateKhz = 0;
+	CUDA_CHECK(cudaDeviceGetAttribute(&clockRateKhz, cudaDevAttrClockRate, deviceIndex));
+
+	cudaDeviceProp deviceProperties;
+	CUDA_CHECK(cudaGetDeviceProperties(&deviceProperties, deviceIndex));
+
+	const int blockCount = 1;
+	const std::size_t resultBytes = sizeof(std::uint64_t);
+
+	const unsigned long long clockRateHz =
+		static_cast<unsigned long long>(clockRateKhz) * 1000ULL;
+
+	const unsigned long long durationCycles =
+		(clockRateHz / 1000ULL) * static_cast<unsigned long long>(kernelMilliseconds);
+
+	std::uint64_t* deviceOutputValue = nullptr;
+	CUDA_CHECK(cudaMalloc(&deviceOutputValue, resultBytes));
+
+	std::printf(
+		"[GPU %d] Device: %s, blocks: %d, threads: %d, allocation: %.2f KB, kernel slice: %d ms, nanosleep: %u ns\n",
+		deviceIndex,
+		deviceProperties.name,
+		blockCount,
+		threadsPerBlock,
+		static_cast<double>(resultBytes) / 1024.0,
+		kernelMilliseconds,
+		sleepNanoseconds);
+
+	const auto endTime = std::chrono::steady_clock::now() + std::chrono::seconds(totalSeconds);
+
+	while (!shouldStop && std::chrono::steady_clock::now() < endTime)
+	{
+		KeepGpuUtilActiveSleepKernel<<<blockCount, threadsPerBlock>>>(deviceOutputValue, durationCycles, sleepNanoseconds);
+		CUDA_CHECK(cudaGetLastError());
+		CUDA_CHECK(cudaDeviceSynchronize());
+	}
+
+	CUDA_CHECK(cudaFree(deviceOutputValue));
+	CUDA_CHECK(cudaDeviceReset());
+
+	std::printf("[GPU %d] Finished\n", deviceIndex);
+}
+
+int main(int argumentCount, char** argumentValues)
+{
+	std::signal(SIGINT, HandleSignal);
+	std::signal(SIGTERM, HandleSignal);
+
+	int totalSeconds = 360000;
+	int kernelMilliseconds = 1000;
+	int threadsPerBlock = 1;
+	unsigned int sleepNanoseconds = 1000000;
+
+	if (argumentCount >= 2)
+	{
+		totalSeconds = std::atoi(argumentValues[1]);
+	}
+
+	if (argumentCount >= 3)
+	{
+		kernelMilliseconds = std::atoi(argumentValues[2]);
+	}
+
+	if (argumentCount >= 4)
+	{
+		threadsPerBlock = std::atoi(argumentValues[3]);
+	}
+
+	if (argumentCount >= 5)
+	{
+		sleepNanoseconds = static_cast<unsigned int>(std::atoi(argumentValues[4]));
+	}
+
+	totalSeconds = std::max(1, totalSeconds);
+	kernelMilliseconds = std::max(1, kernelMilliseconds);
+	threadsPerBlock = std::max(1, threadsPerBlock);
+	sleepNanoseconds = std::max(1u, sleepNanoseconds);
+
+	int deviceCount = 0;
+	CUDA_CHECK(cudaGetDeviceCount(&deviceCount));
+
+	if (deviceCount <= 0)
+	{
+		std::fprintf(stderr, "No CUDA devices found.\n");
+		return EXIT_FAILURE;
+	}
+
+	std::printf("Visible CUDA device count: %d\n", deviceCount);
+	std::printf("Total duration: %d seconds\n", totalSeconds);
+	std::printf("Kernel slice duration: %d ms\n", kernelMilliseconds);
+	std::printf("Threads per block: %d\n", threadsPerBlock);
+	std::printf("Nanosleep per loop: %u ns\n", sleepNanoseconds);
+	std::printf("Mode: minimal GPU-Util filler with nanosleep\n");
+
+	std::vector<std::thread> workerThreads;
+
+	for (int deviceIndex = 0; deviceIndex < deviceCount; ++deviceIndex)
+	{
+		workerThreads.emplace_back(
+			RunOnDevice,
+			deviceIndex,
+			totalSeconds,
+			kernelMilliseconds,
+			threadsPerBlock,
+			sleepNanoseconds);
+	}
+
+	for (std::thread& workerThread : workerThreads)
+	{
+		if (workerThread.joinable())
+		{
+			workerThread.join();
+		}
+	}
+
+	return EXIT_SUCCESS;
+}
