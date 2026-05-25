@@ -1,187 +1,92 @@
 #include <cuda_runtime.h>
+
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
-#include <cstdint>
 #include <thread>
-#include <vector>
-#include <chrono>
-#include <csignal>
-#include <algorithm>
 
-#define CUDA_CHECK(cudaCall) \
+#define CHECK_CUDA(call) \
 	do \
 	{ \
-		cudaError_t cudaError = (cudaCall); \
+		cudaError_t cudaError = (call); \
 		if (cudaError != cudaSuccess) \
 		{ \
-			std::fprintf(stderr, "CUDA error at %s:%d: %s\n", __FILE__, __LINE__, cudaGetErrorString(cudaError)); \
-			std::exit(EXIT_FAILURE); \
+			std::fprintf(stderr, "CUDA error: %s:%d: %s\n", __FILE__, __LINE__, cudaGetErrorString(cudaError)); \
+			return 1; \
 		} \
 	} while (0)
 
-volatile std::sig_atomic_t shouldStop = 0;
-
-void HandleSignal(int signalNumber)
+__global__ void KeepGpuUtilKernel(volatile unsigned long long* deviceSink, unsigned int sleepCycles)
 {
-	shouldStop = 1;
-}
+	unsigned long long state = clock64() ^ threadIdx.x ^ blockIdx.x;
 
-__global__ void KeepGpuUtilActiveSleepKernel(std::uint64_t* outputValue, unsigned long long durationCycles, unsigned int sleepNanoseconds)
-{
-	unsigned long long startClock = clock64();
-	unsigned long long currentClock = startClock;
-
-	std::uint64_t accumulator =
-		0x9E3779B97F4A7C15ULL ^
-		static_cast<std::uint64_t>(blockIdx.x) ^
-		static_cast<std::uint64_t>(threadIdx.x);
-
-	while ((currentClock - startClock) < durationCycles)
+	while (true)
 	{
-#if __CUDA_ARCH__ >= 700
-		__nanosleep(sleepNanoseconds);
-#else
-		#pragma unroll 4
-		for (int iterationIndex = 0; iterationIndex < 16; ++iterationIndex)
+#pragma unroll 128
+		for (int iteration = 0; iteration < 128; ++iteration)
 		{
-			accumulator ^= accumulator << 13;
-			accumulator ^= accumulator >> 7;
-			accumulator ^= accumulator << 17;
-			asm volatile("" : "+l"(accumulator));
+			state = state * 2862933555777941757ULL + 3037000493ULL;
+		}
+
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 700)
+		if (sleepCycles > 0)
+		{
+			__nanosleep(sleepCycles);
 		}
 #endif
-		currentClock = clock64();
-	}
 
-	if (threadIdx.x == 0)
-	{
-		outputValue[0] = accumulator ^ currentClock;
-	}
-}
-
-void RunOnDevice(
-	int deviceIndex,
-	int totalSeconds,
-	int kernelMilliseconds,
-	int threadsPerBlock,
-	unsigned int sleepNanoseconds)
-{
-	CUDA_CHECK(cudaSetDevice(deviceIndex));
-
-	int clockRateKhz = 0;
-	CUDA_CHECK(cudaDeviceGetAttribute(&clockRateKhz, cudaDevAttrClockRate, deviceIndex));
-
-	cudaDeviceProp deviceProperties;
-	CUDA_CHECK(cudaGetDeviceProperties(&deviceProperties, deviceIndex));
-
-	const int blockCount = 1;
-	const std::size_t resultBytes = sizeof(std::uint64_t);
-
-	const unsigned long long clockRateHz =
-		static_cast<unsigned long long>(clockRateKhz) * 1000ULL;
-
-	const unsigned long long durationCycles =
-		(clockRateHz / 1000ULL) * static_cast<unsigned long long>(kernelMilliseconds);
-
-	std::uint64_t* deviceOutputValue = nullptr;
-	CUDA_CHECK(cudaMalloc(&deviceOutputValue, resultBytes));
-
-	std::printf(
-		"[GPU %d] Device: %s, blocks: %d, threads: %d, allocation: %.2f KB, kernel slice: %d ms, nanosleep: %u ns\n",
-		deviceIndex,
-		deviceProperties.name,
-		blockCount,
-		threadsPerBlock,
-		static_cast<double>(resultBytes) / 1024.0,
-		kernelMilliseconds,
-		sleepNanoseconds);
-
-	const auto endTime = std::chrono::steady_clock::now() + std::chrono::seconds(totalSeconds);
-
-	while (!shouldStop && std::chrono::steady_clock::now() < endTime)
-	{
-		KeepGpuUtilActiveSleepKernel<<<blockCount, threadsPerBlock>>>(deviceOutputValue, durationCycles, sleepNanoseconds);
-		CUDA_CHECK(cudaGetLastError());
-		CUDA_CHECK(cudaDeviceSynchronize());
-	}
-
-	CUDA_CHECK(cudaFree(deviceOutputValue));
-	CUDA_CHECK(cudaDeviceReset());
-
-	std::printf("[GPU %d] Finished\n", deviceIndex);
-}
-
-int main(int argumentCount, char** argumentValues)
-{
-	std::signal(SIGINT, HandleSignal);
-	std::signal(SIGTERM, HandleSignal);
-
-	int totalSeconds = 360000;
-	int kernelMilliseconds = 1000;
-	int threadsPerBlock = 1;
-	unsigned int sleepNanoseconds = 1000000;
-
-	if (argumentCount >= 2)
-	{
-		totalSeconds = std::atoi(argumentValues[1]);
-	}
-
-	if (argumentCount >= 3)
-	{
-		kernelMilliseconds = std::atoi(argumentValues[2]);
-	}
-
-	if (argumentCount >= 4)
-	{
-		threadsPerBlock = std::atoi(argumentValues[3]);
-	}
-
-	if (argumentCount >= 5)
-	{
-		sleepNanoseconds = static_cast<unsigned int>(std::atoi(argumentValues[4]));
-	}
-
-	totalSeconds = std::max(1, totalSeconds);
-	kernelMilliseconds = std::max(1, kernelMilliseconds);
-	threadsPerBlock = std::max(1, threadsPerBlock);
-	sleepNanoseconds = std::max(1u, sleepNanoseconds);
-
-	int deviceCount = 0;
-	CUDA_CHECK(cudaGetDeviceCount(&deviceCount));
-
-	if (deviceCount <= 0)
-	{
-		std::fprintf(stderr, "No CUDA devices found.\n");
-		return EXIT_FAILURE;
-	}
-
-	std::printf("Visible CUDA device count: %d\n", deviceCount);
-	std::printf("Total duration: %d seconds\n", totalSeconds);
-	std::printf("Kernel slice duration: %d ms\n", kernelMilliseconds);
-	std::printf("Threads per block: %d\n", threadsPerBlock);
-	std::printf("Nanosleep per loop: %u ns\n", sleepNanoseconds);
-	std::printf("Mode: minimal GPU-Util filler with nanosleep\n");
-
-	std::vector<std::thread> workerThreads;
-
-	for (int deviceIndex = 0; deviceIndex < deviceCount; ++deviceIndex)
-	{
-		workerThreads.emplace_back(
-			RunOnDevice,
-			deviceIndex,
-			totalSeconds,
-			kernelMilliseconds,
-			threadsPerBlock,
-			sleepNanoseconds);
-	}
-
-	for (std::thread& workerThread : workerThreads)
-	{
-		if (workerThread.joinable())
+		if ((state & 0xfffffULL) == 0)
 		{
-			workerThread.join();
+			deviceSink[0] = state;
 		}
 	}
+}
 
-	return EXIT_SUCCESS;
+int main(int argumentCount, char** arguments)
+{
+	int deviceId = argumentCount > 1 ? std::atoi(arguments[1]) : 0;
+	int blockCount = argumentCount > 2 ? std::atoi(arguments[2]) : 1;
+	unsigned int sleepCycles = argumentCount > 3 ? static_cast<unsigned int>(std::atoi(arguments[3])) : 1000;
+
+	CHECK_CUDA(cudaSetDevice(deviceId));
+
+	int leastPriority = 0;
+	int greatestPriority = 0;
+	CHECK_CUDA(cudaDeviceGetStreamPriorityRange(&leastPriority, &greatestPriority));
+
+	cudaStream_t lowPriorityStream = nullptr;
+	CHECK_CUDA(cudaStreamCreateWithPriority(&lowPriorityStream, cudaStreamNonBlocking, leastPriority));
+
+	unsigned long long* deviceSink = nullptr;
+	CHECK_CUDA(cudaMalloc(&deviceSink, sizeof(unsigned long long)));
+	CHECK_CUDA(cudaMemsetAsync(deviceSink, 0, sizeof(unsigned long long), lowPriorityStream));
+
+	std::printf("Device: %d\n", deviceId);
+	std::printf("Blocks: %d\n", blockCount);
+	std::printf("Threads per block: 1\n");
+	std::printf("Sleep cycles: %u\n", sleepCycles);
+	std::printf("Press Ctrl+C to stop.\n");
+
+	KeepGpuUtilKernel<<<blockCount, 1, 0, lowPriorityStream>>>(deviceSink, sleepCycles);
+	CHECK_CUDA(cudaPeekAtLastError());
+
+	while (true)
+	{
+		cudaError_t streamStatus = cudaStreamQuery(lowPriorityStream);
+
+		if (streamStatus == cudaSuccess)
+		{
+			break;
+		}
+
+		if (streamStatus != cudaErrorNotReady)
+		{
+			std::fprintf(stderr, "CUDA stream error: %s\n", cudaGetErrorString(streamStatus));
+			return 1;
+		}
+
+		std::this_thread::sleep_for(std::chrono::seconds(1));
+	}
+
+	return 0;
 }
