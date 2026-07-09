@@ -281,6 +281,185 @@ probs.div_(torch.empty_like(probs).exponential_(1)).argmax(dim=-1)
 
 `torch.multinomial` 的输入行可以不归一化为 1，但必须是非负、有限、且每行总和非零；`Tensor.exponential_()` 则是用指数分布样本填充 tensor。([docs.pytorch.org][3])
 
+
+`logits` 简单理解就是：**模型 forward 之后，对“下一个 token”在整个词表上的打分**。
+
+在 DeepSeek V4-Pro 的 `generate.py` 中，真实流程就是：
+
+```python
+logits = model.forward(tokens[:, prev_pos:cur_pos], prev_pos)
+
+if temperature > 0:
+    next_token = sample(logits, temperature)
+else:
+    next_token = logits.argmax(dim=-1)
+```
+
+也就是说，`logits` 形状通常是：
+
+```text
+[batch_size, vocab_size]
+```
+
+如果是 DeepSeek V4-Pro，`vocab_size` 大约是 129280。为了单步理解，可以直接用一个很小的随机 tensor 或手写 tensor 代替真实 logits。DeepSeek 公开参考代码里的 `sample()` 正是 `softmax + exponential_ + argmax` 这个逻辑，另一个分支是 `temperature <= 0` 时直接 `argmax`。([Hugging Face][1])
+
+下面这个脚本就直接对齐 DeepSeek 的 `sample()` 和调用分支，适合你逐行调试。
+
+```python
+import torch
+
+
+torch.set_printoptions(precision=4, sci_mode=False)
+
+
+def sample(logits, temperature: float = 1.0):
+    """
+    对齐 DeepSeek V4-Pro inference/generate.py 里的 sample()。
+    输入:
+        logits: [batch_size, vocab_size]
+    输出:
+        next_token: [batch_size]
+    """
+
+    print("\n[1] 原始 logits")
+    print(logits)
+
+    logits = logits / max(temperature, 1e-5)
+    print("\n[2] temperature 缩放后的 logits")
+    print(logits)
+
+    probs = torch.softmax(logits, dim=-1, dtype=torch.float32)
+    print("\n[3] softmax 后的 probs，表示每个 token 被选中的概率倾向")
+    print(probs)
+    print("每行概率和:", probs.sum(dim=-1))
+
+    exp_noise = torch.empty_like(probs).exponential_(1)
+    print("\n[4] exponential_(1) 生成的 Exp(1) 随机噪声")
+    print(exp_noise)
+
+    scores = probs / exp_noise
+    print("\n[5] probs / exp_noise")
+    print(scores)
+
+    next_token = scores.argmax(dim=-1)
+    print("\n[6] argmax 得到最终采样 token id")
+    print(next_token)
+
+    return next_token
+
+
+def decode_one_step(logits, temperature: float):
+    """
+    对齐 DeepSeek generate() 中调用 sample 的两个分支。
+    """
+
+    print("\n==============================")
+    print(f"temperature = {temperature}")
+    print("==============================")
+
+    if temperature > 0:
+        print("走 sample 分支：随机采样")
+        next_token = sample(logits, temperature)
+    else:
+        print("走 greedy 分支：直接选择 logits 最大的 token")
+        next_token = logits.argmax(dim=-1)
+        print("argmax next_token:", next_token)
+
+    return next_token
+
+
+def main():
+    torch.manual_seed(1234)
+
+    # 这里用小 vocab 方便你看清楚每一步。
+    # batch_size = 1, vocab_size = 6
+    #
+    # 真实 DeepSeek V4-Pro 中大致是:
+    # logits.shape = [batch_size, 129280]
+    logits = torch.tensor(
+        [[2.0, 1.0, 0.1, -1.0, 3.0, 0.5]],
+        dtype=torch.float32,
+    )
+
+    print("logits.shape:", logits.shape)
+    print("含义：这一行里有 6 个 token 的分数，分数越大，softmax 后概率通常越大。")
+
+    # 分支 1：temperature > 0，走 DeepSeek 的 sample()
+    decode_one_step(logits.clone(), temperature=0.6)
+
+    # 分支 2：temperature <= 0，走 greedy argmax
+    decode_one_step(logits.clone(), temperature=0.0)
+
+    # 对比 torch.multinomial：它也是从 probs 中按概率采样
+    print("\n==============================")
+    print("额外对比：torch.multinomial(probs, 1)")
+    print("==============================")
+
+    probs = torch.softmax(logits, dim=-1, dtype=torch.float32)
+    print("probs:", probs)
+
+    token_by_multinomial = torch.multinomial(probs, num_samples=1)
+    print("torch.multinomial 输出:", token_by_multinomial.squeeze(-1))
+
+    token_by_exp_race = probs.div(torch.empty_like(probs).exponential_(1)).argmax(dim=-1)
+    print("exponential_ + argmax 输出:", token_by_exp_race)
+
+    print("\n注意：两者单次结果不一定相同，因为随机数不同；它们等价的是采样分布。")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+你可以这样跑：
+
+```bash
+python debug_deepseek_sample.py
+```
+
+核心对应关系是：
+
+```python
+logits
+```
+
+表示模型对每个候选 token 的原始打分。
+
+```python
+probs = torch.softmax(logits, dim=-1)
+```
+
+把打分变成概率分布。
+
+```python
+torch.empty_like(probs).exponential_(1)
+```
+
+给每个候选 token 生成一个指数分布随机数。
+
+```python
+probs / exp_noise
+```
+
+把概率和随机噪声结合起来。
+
+```python
+argmax(dim=-1)
+```
+
+选出最终 token。
+
+如果你只想看 greedy 解码，把 `temperature=0.0`，它不会进入 `sample()`，而是直接：
+
+```python
+next_token = logits.argmax(dim=-1)
+```
+
+对于上面这个例子，原始 `logits` 最大的是 token 4，因为它的分数是 `3.0`，所以 greedy 分支一定选 token 4。采样分支则不一定每次选 token 4，但 token 4 被选中的概率最大。
+
+[1]: https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro/blob/44572c0c9be81a83d6edef6ea11037359259a0b2/inference/generate.py?utm_source=chatgpt.com "inference/generate.py - DeepSeek-V4-Pro"
+
+
 [1]: https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro/blob/main/config.json "config.json · deepseek-ai/DeepSeek-V4-Pro at main"
 [2]: https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro/blob/main/inference/generate.py "inference/generate.py · deepseek-ai/DeepSeek-V4-Pro at main"
 [3]: https://docs.pytorch.org/docs/stable/generated/torch.multinomial.html?utm_source=chatgpt.com "torch.multinomial — PyTorch 2.12 documentation"
