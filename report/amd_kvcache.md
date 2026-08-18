@@ -1063,6 +1063,608 @@ on_gfx950()
 [6]: https://rocm.blogs.amd.com/software-tools-optimization/cdna4-gemm-kernels/README.html?utm_source=chatgpt.com "FP8 GEMM Optimization on AMD CDNA™4 Architecture — ROCm Blogs"
 [7]: https://rocm.blogs.amd.com/software-tools-optimization/kimi-k25-mxfp4-atom/README.html?utm_source=chatgpt.com "Serve Kimi-K2.5-MXFP4 on MI355X with ATOM — ROCm Blogs"
 
+有，而且这里需要区分 **“UltraQuant 论文里的完整算法”** 和 **“已经公开 upstream 的底层实现”**。截至 **2026-08-17**，我的判断是：
+
+> **UltraQuant 的核心硬件路线已经在 AMD 的 AITER / vLLM 代码中明显落地；但我没有找到一个与论文 1:1 对应、直接叫 `UltraQuant`、可以通过 `--kv-cache-dtype ultraquant` 打开的通用 vLLM backend。**
+>
+> 更准确地说：
+>
+> * **Ultra-TQ**：已经非常明确地进入 vLLM，就是我们上一轮看的 PR #47896。
+> * **UltraQuant proper**：`FP4 E2M1 + UE8M0 + scaled-MFMA` 这些关键硬件组件已经进入 AITER，并出现在 vLLM 的 DeepSeek-V4 专用路径里；但**当前公开代码的量化 recipe 与论文 UltraQuant 并不完全相同**。
+
+### 1. 先明确 UltraQuant 论文到底创新在哪
+
+UltraQuant 不是把 TurboQuant 的 centroid kernel 再优化一下。论文明确把两条路线分开：
+
+* **Ultra-TQ**：仍然保存 TurboQuant 的 4-bit centroid/codebook representation，通过 layout、lookup、MFMA scheduling 优化软件 dequant。
+* **UltraQuant**：直接扔掉 centroid lookup，用硬件原生 **FP4 E2M1 grid** 近似它，从而把 dequant 融入 CDNA4 的 scaled-MFMA。([arXiv][1])
+
+论文里的 UltraQuant cache 是：
+
+[
+\boxed{
+32\times E2M1 + 1\times UE8M0
+}
+]
+
+即每 32 个元素：
+
+* 32 个 E2M1，4 bit/value；
+* 一个 8-bit UE8M0 scale；
+
+总共：
+
+[
+16+1=17\text{ bytes}
+]
+
+所以有效 bit 数：
+
+[
+\frac{17\times8}{32}=4.25\text{ bit/value}
+]
+
+论文明确说这是为了让 CDNA4 Matrix Core 直接消费，不需要把 KV materialize 成 BF16。([arXiv][1])
+
+计算目标是：
+
+[
+\boxed{
+Q_{FP8}\times K_{FP4}\rightarrow FP32
+}
+]
+
+以及相应的 scaled-FP4 attention 路径。Q 会先 Hadamard rotate，再转成 FP8 E4M3；KV 则保持 FP4+UE8M0，使用 `MFMA_SCALE_F32_*_F8F6F4`。([arXiv][1])
+
+这与前面 TurboQuant FlyDSL 的：
+
+[
+BF16\times BF16\rightarrow FP32
+]
+
+是完全不同的路线。
+
+---
+
+## 2. Ultra-TQ 已经明确进了 vLLM
+
+这一部分就是我们前面看的 **vLLM PR #47896**。
+
+它 upstream 的：
+
+```text
+FlyDSL TurboQuant 4-bit KV decode
+gfx950 / MI355X
+```
+
+本质仍然是：
+
+```text
+4-bit centroid/index cache
+          ↓
+tile 内 lookup/dequant
+          ↓
+BF16 K/V
+          ↓
+BF16 MFMA
+```
+
+所以它基本可以直接对应论文所说的：
+
+[
+\boxed{\text{Ultra-TQ}}
+]
+
+而不是 UltraQuant proper。
+
+论文自己也把 Ultra-TQ 描述成“保持 TurboQuant representation，优化 lookup/layout/MFMA scheduling”。([arXiv][1])
+
+---
+
+# 3. 真正有意思的是：AITER 已经出现 UltraQuant 风格的 FP4 KV cache 写入代码
+
+最直接的一笔是：
+
+**AITER PR #4029：**
+
+> `DeepSeek-V4 FP4: fused_compress FP4 scatter + rmsnorm_rope_rotate FP4 KV-cache kernel`
+
+它已经在 **2026-07-28 合并**。
+
+这个 PR 加入：
+
+```text
+csrc/kernels/dsv4_rotate_quant.cu
+```
+
+核心功能就是：
+
+```text
+RMSNorm
+   ↓
+RoPE
+   ↓
+optional Hadamard rotation
+   ↓
+FP4 E2M1 quantization
+   ↓
+UE8M0 scale
+   ↓
+paged KV-cache write
+```
+
+PR 自己明确写的是：
+
+> fused RMSNorm + RoPE + optional Hadamard rotate + FP4(E2M1) quant + paged KV-cache write.
+
+这已经和 UltraQuant 的 encoder 非常接近了。
+
+---
+
+# 4. 我把这段 kernel 往下追了，确实是真 FP4，不是伪量化
+
+现在 AITER：
+
+```text
+csrc/kernels/dsv4_rotate_quant.cu
+```
+
+中有：
+
+```cpp
+hadamard_rotate_activation_fp4quant_kernel
+```
+
+它先做真正的 Hadamard butterfly，最后归一化：
+
+```cpp
+af[i] = af[i] * dim_rsqrt;
+```
+
+然后：
+
+```cpp
+if constexpr(std::is_same_v<DTYPE_O, opus::fp4_t>)
+```
+
+进入 FP4 quantization。
+
+真正的数据类型是：
+
+```cpp
+opus::fp4_t
+```
+
+而不是 uint4/int4 做软件模拟。
+
+之后求 group absmax：
+
+```cpp
+absMax = fmaxf(absMax, fabsf(af[i]));
+```
+
+然后生成 E8M0：
+
+```cpp
+uint8_t scale_e8m0 = ceil_pow2(
+    absMax * (1.0f / fp4_max)
+);
+```
+
+再：
+
+```cpp
+scale_f32 =
+    bitcast<float>(scale_e8m0 << 23);
+```
+
+最后：
+
+```cpp
+store_vector<..., opus::fp4_t>(
+    ...,
+    af,
+    ...,
+    scale_f32
+);
+```
+
+所以公开代码里已经存在真正的：
+
+[
+\boxed{
+BF16
+\rightarrow Hadamard
+\rightarrow E2M1
++
+UE8M0
+}
+]
+
+这绝对不是普通的“INT4 KV cache”。
+
+---
+
+# 5. paged KV cache layout 也已经按 FP4 hardware format 做了
+
+更具体地，代码专门定义了：
+
+```cpp
+kv_fp4_preshuffle_offset(...)
+kv_scale_preshuffle_offset(...)
+store_kv_fp4_preshuffle(...)
+```
+
+并注明：
+
+```text
+FlyDSL / pa_mqa_logits_fp4 KV preshuffle
+```
+
+也就是说 cache layout 根本不是：
+
+```text
+[token][head][packed int4]
+```
+
+这么简单。
+
+它专门排成适合后面的 FP4 Matrix Core reader 的 layout：
+
+```text
+[num_blocks,
+ k_tiles,
+ 4,
+ kv_block_size,
+ 16]
+```
+
+scale 同样单独 preshuffle。
+
+这已经是典型的：
+
+> **storage format 与 MFMA operand layout 联合设计**
+
+而不是单纯为了省 HBM。
+
+---
+
+# 6. 更关键：AITER 已经有直接读取 FP4 KV 的 scaled-MFMA kernel
+
+另一个关键 PR 是：
+
+**AITER #4230**
+
+```text
+[FLYDSL] Support paged mqa logits fp4 varqlen kernel
+```
+
+同样在 **2026-07-28** 合并。
+
+文件：
+
+```text
+aiter/ops/flydsl/kernels/pa_mqa_logits_fp4.py
+```
+
+这里已经出现我们上一轮讨论过、但 TurboQuant kernel **没有使用**的 CDNA4 指令：
+
+```python
+rocdl.mfma_scale_f32_16x16x128_f8f6f4(...)
+```
+
+注意这里不是：
+
+```text
+mfma_f32_..._bf16
+```
+
+而是：
+
+```text
+mfma_scale_f32_16x16x128_f8f6f4
+                    ^^^^^^^
+```
+
+这才是 UltraQuant 论文真正想利用的硬件能力。
+
+它同时给 MFMA 输入：
+
+```text
+q operand
+q_scale (UE8M0)
+
+kv operand
+kv_scale (UE8M0)
+```
+
+核心调用：
+
+```python
+accs[mi_idx] =
+    rocdl.mfma_scale_f32_16x16x128_f8f6f4(
+        T.f32x4,
+        [
+            q_a_ops[k_tile][mi_idx],
+            kv_b,
+            accs[mi_idx],
+            ...
+            q_scale_ops[k_tile][mi_idx],
+            ...
+            kv_scale_val,
+        ],
+    )
+```
+
+所以这里是真正：
+
+[
+\boxed{
+lowbit\ operand
++
+UE8M0\ scale
+\rightarrow
+scaled\ MFMA
+\rightarrow
+FP32
+}
+]
+
+而不是：
+
+```text
+FP4 cache
+ ↓
+BF16 tensor
+ ↓
+BF16 MFMA
+```
+
+---
+
+# 7. 但是：这一条还不能直接等号成“论文 UltraQuant”
+
+这里有两个重要差异。
+
+### 差异一：当前 AITER 这个 DeepSeek-V4 kernel 的 Q 也是 FP4
+
+它的公开 API 明确是：
+
+```python
+def flydsl_pa_mqa_logits_fp4(
+    q_fp4: torch.Tensor,
+    q_scale: torch.Tensor,
+    kv_cache: torch.Tensor,
+    kv_scale: torch.Tensor,
+    ...
+)
+```
+
+所以这个具体 kernel 更接近：
+
+[
+\boxed{
+Q_{FP4}\times K_{FP4}
+}
+]
+
+而论文 UltraQuant 明确规定：
+
+[
+\boxed{
+Q_{FP8}\times K_{FP4}
+}
+]
+
+论文写得非常清楚：query Hadamard rotation 之后被 round 到 **FP8 E4M3**，再与 FP4 K 走 scaled-MFMA。([arXiv][1])
+
+因此：
+
+> AITER 已经把 **FP4+UE8M0+scaled-MFMA 的底层机制**实现了，但这个 DeepSeek-V4 `pa_mqa_logits_fp4` 不是论文 MiniMax/Qwen UltraQuant kernel 的原样公开版本。
+
+---
+
+# 8. 第二个差异更加关键：scale recipe 不一样
+
+UltraQuant 论文不是标准 MXFP4 的 absmax recipe。
+
+论文给的是：
+
+[
+s=c\cdot m
+]
+
+其中：
+
+[
+m=\max_i |x_i|
+]
+
+并通过：
+
+[
+E=
+\operatorname{round}
+\left(
+\log_2(c,m)
+\right)
+]
+
+生成 UE8M0 exponent。
+
+它专门离线搜索：
+
+[
+\boxed{c=0.156}
+]
+
+并称这个为 **constant-optimized scaling**。([arXiv][1])
+
+这是 UltraQuant 的一个重要数值创新。
+
+---
+
+## 9. 但现在公开 vLLM / AITER 用的是标准 MXFP4 scale
+
+例如当前 vLLM DeepSeek-V4 文件：
+
+```text
+vllm/models/deepseek_v4/common/ops/
+fused_compress_quant_cache.py
+```
+
+已经明确有：
+
+```python
+_fused_kv_compress_norm_rope_insert_indexer_mxfp4_attn
+```
+
+而 cache 定义是：
+
+```text
+32 × E2M1
++ UE8M0
+```
+
+这一部分和 UltraQuant 一样。([GitHub][2])
+
+但它的 scale 是：
+
+[
+\boxed{
+s=
+2^{\lceil\log_2(amax/6)\rceil}
+}
+]
+
+源码注释原文就是：
+
+```text
+Per-32-element block scale =
+    2^ceil(log2(amax / 6.0))
+```
+
+([GitHub][3])
+
+也就是经典 MXFP4 的：
+
+[
+\frac{amax}{E2M1_{\max}}
+]
+
+再 round-up 到 power-of-two。
+
+我也专门在当前 vLLM/AITER 中查了：
+
+```text
+0.156
+UltraQuant
+```
+
+没有找到相应实现。
+
+所以：
+
+[
+\boxed{
+\text{当前公开 DeepSeek-V4 FP4 KV}
+\neq
+\text{论文 exact UltraQuant quantizer}
+}
+]
+
+---
+
+# 10. 因此现在可以把 AMD 的公开路线画成三层
+
+| 路径                   | Cache             | Attention compute         | 公开状态                    |
+| -------------------- | ----------------- | ------------------------- | ----------------------- |
+| vLLM OSS TurboQuant  | centroid/int code | 软件恢复                      | 已公开                     |
+| **Ultra-TQ**         | centroid 4bit     | 恢复 BF16 → BF16 MFMA       | **vLLM #47896 已合入**     |
+| **UltraQuant paper** | E2M1 + UE8M0      | **FP8 × FP4 scaled MFMA** | 完整通用版本未发现公开 upstream    |
+| DeepSeek-V4 FP4 path | E2M1 + UE8M0      | native scaled MFMA        | **AITER/vLLM 已公开，模型特化** |
+
+所以我会把目前的状态概括成：
+
+> **UltraQuant 的“硬件架构路线”基本已经公开实现；UltraQuant 的“论文完整数值 recipe + 通用 MHA serving backend”尚未完整公开。**
+
+---
+
+# 11. 这也解释了为什么之前我们看 TurboQuant 时没有发现 native FP4 MFMA
+
+这两条开发线实际上是并行存在的：
+
+### vLLM PR #47896
+
+```text
+TQ4 code
+  ↓
+centroid lookup
+  ↓
+BF16 K
+  ↓
+BF16 MFMA
+```
+
+核心：
+
+```text
+mfma_f32_16x16x32_bf16
+```
+
+### AITER DeepSeek-V4 / UltraQuant-style
+
+```text
+E2M1 payload
+      +
+UE8M0 scale
+      ↓
+MFMA_SCALE_F32_*_F8F6F4
+      ↓
+FP32
+```
+
+第二种才真正释放 MI355X/CDNA4 的 FP4 Matrix Core。
+
+而论文 UltraQuant 的核心论点恰恰就是：
+
+> TurboQuant centroid 的 MSE 更好，但软件 lookup 太贵；**牺牲一点 codebook 最优性，把表示改成硬件原生 E2M1，反而获得更好的端到端 serving performance。** ([arXiv][1])
+
+---
+
+## 我现在最关注的代码位置
+
+如果继续追 UltraQuant，我建议下一步就盯这四处：
+
+```text
+ROCm/aiter
+├── csrc/kernels/dsv4_rotate_quant.cu
+│   └── Hadamard → FP4 → E8M0
+│
+├── aiter/ops/flydsl/kernels/
+│   ├── pa_mqa_logits_fp4.py
+│   └── pa_mqa_logits_fp4_prefill.py
+│       └── MFMA_SCALE_F32_...F8F6F4
+│
+└── aiter/ops/flydsl/kernels/fused_compress_attn.py
+
+vllm
+└── vllm/models/deepseek_v4/common/ops/
+    └── fused_compress_quant_cache.py
+        └── MXFP4 E2M1 + UE8M0 paged cache
+```
+
+其中真正最值得继续拆的是：
+
+```python
+rocdl.mfma_scale_f32_16x16x128_f8f6f4
+```
+
+我们可以下一步**直接把这个函数的 9 个 operand 各自对应到 CDNA4 ISA 的 A/B format、A/B scale format，弄清楚 `4,4,0,...` 这些立即数到底编码什么**；然后再对照 UltraQuant 论文的 **FP8 Q × FP4 K**，判断 AITER 现有 kernel 只差一个 Q operand format 改动，还是需要重新设计 operand layout。这个会比只看论文更能判断“UltraQuant 离正式 vLLM 通用落地还有多远”。
+
+[1]: https://arxiv.org/abs/2606.20474 "UltraQuant: 4-bit KV Caching for Context-Heavy Agents"
+[2]: https://github.com/vllm-project/vllm/blob/main/vllm/models/deepseek_v4/common/ops/fused_compress_quant_cache.py?utm_source=chatgpt.com "vllm/vllm/models/deepseek_v4/common/ops/fused_compress_quant_cache.py at main · vllm-project/vllm · GitHub"
+[3]: https://github.com/vllm-project/vllm/blob/main/vllm/models/deepseek_v4/common/ops/fused_compress_quant_cache.py "vllm/vllm/models/deepseek_v4/common/ops/fused_compress_quant_cache.py at main · vllm-project/vllm · GitHub"
 
 
 
