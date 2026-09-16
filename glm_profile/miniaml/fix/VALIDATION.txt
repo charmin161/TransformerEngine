@@ -1,0 +1,6 @@
+实际执行的本地验证（非 B200、非真实 vLLM）
+success: PASS (exit=0; local mock API remains alive)
+nonzero: PASS (exit=1; local mock API remains alive)
+timeout: PASS (exit=1; local mock API remains alive)
+Python py_compile: PASS
+无 GPU/模型加载；未连接用户服务器。
