@@ -1,0 +1,42 @@
+{
+  "scale_boundary_cases": 768,
+  "scale_oracle": "PASS",
+  "torch.float32": {
+    "shape": [
+      5,
+      8,
+      576
+    ],
+    "group_independence": "PASS",
+    "split_equivalence": "PASS",
+    "strided_layout": "PASS",
+    "prefill_unchanged_reference": "PASS",
+    "normalized_rmse": 0.026347797363996506
+  },
+  "torch.float16": {
+    "shape": [
+      5,
+      8,
+      576
+    ],
+    "group_independence": "PASS",
+    "split_equivalence": "PASS",
+    "strided_layout": "PASS",
+    "prefill_unchanged_reference": "PASS",
+    "normalized_rmse": 0.026503322646021843
+  },
+  "torch.bfloat16": {
+    "shape": [
+      5,
+      8,
+      576
+    ],
+    "group_independence": "PASS",
+    "split_equivalence": "PASS",
+    "strided_layout": "PASS",
+    "prefill_unchanged_reference": "PASS",
+    "normalized_rmse": 0.02658170461654663
+  },
+  "nonfinite_preservation_reference": "PASS",
+  "GPU_triton_execution": "NOT RUN: CPU-only environment, no Triton installed"
+}
