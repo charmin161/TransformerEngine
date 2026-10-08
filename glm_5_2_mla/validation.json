@@ -1,0 +1,35 @@
+{
+  "status": "passed",
+  "scope": "CPU mathematical reference only; NOT Triton/GPU/vLLM",
+  "torch": "2.10.0+cpu",
+  "checks": [
+    {
+      "name": "E8M0 scale boundary cases",
+      "cases": 765
+    },
+    {
+      "name": "512 + 64 split equals 576 contiguous group-32 quantization"
+    },
+    {
+      "name": "No cross-group, cross-token or cross-head scale mixing"
+    },
+    {
+      "name": "Interleaved PE grouping differs from separately quantized even/odd vectors"
+    },
+    {
+      "name": "Quantization and RoPE do not commute"
+    },
+    {
+      "name": "Prefill/invalid request rows preserved; high-precision sources unchanged"
+    },
+    {
+      "name": "Raw-PE + RoPE path equals pre-rotated PE path when inputs match"
+    }
+  ],
+  "gpu_available": false,
+  "gpu_kernel_test": "not executed",
+  "python_syntax_check": "passed",
+  "complete_readme_python_snippets_syntax_check": "passed",
+  "complete_readme_python_snippet_count": 6,
+  "readme_location_anchor_fragments_not_full_programs": 1
+}
